@@ -11,10 +11,10 @@ load_dotenv('.env.local')
 
 
 class DataTransformer:
-    """
+    '''
     Reusable data transformer that can be fitted on training data and applied to any dataset.
     This class separates transformation logic from data loading to prevent data leakage.
-    """
+    '''
 
     def __init__(self, cat_cols: list, num_cols: list, bool_cols: list, date_cols: list,
                  scaler_type: Literal['standard', 'minmax'] = 'standard'):
@@ -33,20 +33,20 @@ class DataTransformer:
 
     @classmethod
     def from_data(cls, X: pd.DataFrame, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        """
+        '''
         Create and fit a transformer directly from a DataFrame.
         Automatically categorizes columns and fits transformers.
 
         Returns:
             DataTransformer: Fitted transformer ready to use
-        """
+        '''
         # Categorize columns based on X
-        date_cols = X.select_dtypes(include=["datetime"]).columns.tolist()
-        bool_cols = X.columns[(X.columns.str.contains("FLAG")& (X.columns!= "SUM_FLAGS"))].tolist()
-        numerical_cols = X.select_dtypes(include=["int64", "float64", "int32"]).columns.tolist()
-        id_cols = X.columns[X.columns.str.contains("ID") & ~X.columns.isin(bool_cols)].tolist()
+        date_cols = X.select_dtypes(include=['datetime']).columns.tolist()
+        bool_cols = X.columns[(X.columns.str.contains('FLAG')& (X.columns!= 'SUM_FLAGS'))].tolist()
+        numerical_cols = X.select_dtypes(include=['int64', 'float64', 'int32']).columns.tolist()
+        id_cols = X.columns[X.columns.str.contains('ID') & ~X.columns.isin(bool_cols)].tolist()
         num_cols = [i for i in numerical_cols if i not in id_cols and i not in bool_cols]
-        categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
+        categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
         cat_cols = categorical_cols + id_cols
 
         transformer = cls(
@@ -61,7 +61,7 @@ class DataTransformer:
         return transformer
 
     def fit(self, X: pd.DataFrame):
-        """Fit scaler and one-hot encoder on training data."""
+        '''Fit scaler and one-hot encoder on training data.'''
         if self.scaler_type.lower() == 'minmax':
             self.scaler = MinMaxScaler()
         else:
@@ -86,9 +86,9 @@ class DataTransformer:
         return self
 
     def transform(self, X: pd.DataFrame, array_format: bool = True):
-        """Transform data using fitted scaler and encoder."""
+        '''Transform data using fitted scaler and encoder.'''
         if not self._is_fitted:
-            raise RuntimeError("Transformer must be fitted before transform. Call fit() first.")
+            raise RuntimeError('Transformer must be fitted before transform. Call fit() first.')
 
         # One-hot encode categorical columns
         if self.cat_cols and self.ohe is not None:
@@ -117,18 +117,18 @@ class DataTransformer:
             return pd.concat([cat_df, bool_df, num_df], axis=1)
 
     def fit_transform(self, X: pd.DataFrame, array_format: bool = True):
-        """Fit on training data and transform it."""
+        '''Fit on training data and transform it.'''
         self.fit(X)
         return self.transform(X, array_format=array_format)
 
     def get_ohe_cols(self):
-        """Get one-hot encoded column names."""
+        '''Get one-hot encoded column names.'''
         if not self._is_fitted or self.ohe is None:
             return []
         return [str(col) for col in self.ohe.get_feature_names_out()]
 
     def get_ohe_dict(self):
-        """Get one-hot encoding feature index mapping as a dictionary."""
+        '''Get one-hot encoding feature index mapping as a dictionary.'''
         if not self._is_fitted or self.ohe is None:
             return {}
 
@@ -145,27 +145,27 @@ class DataTransformer:
                         start_ind = j
                     count += 1
             features_dict[ohe_features[i]] = {
-                "start": start_ind,
-                "end": start_ind + count - 1 if start_ind is not None else None
+                'start': start_ind,
+                'end': start_ind + count - 1 if start_ind is not None else None
             }
         return features_dict
 
     def get_cat_dims(self):
-        """Get number of categorical dimensions (one-hot encoded)."""
+        '''Get number of categorical dimensions (one-hot encoded).'''
         return len(self.get_ohe_cols())
 
     def get_bool_dims(self):
-        """Get number of boolean dimensions."""
+        '''Get number of boolean dimensions.'''
         return len(self.bool_cols)
 
     def get_cont_dims(self):
-        """Get number of continuous dimensions (numerical + date)."""
+        '''Get number of continuous dimensions (numerical + date).'''
         return len(self.num_cols) + len(self.date_cols)
 
     def inverse_transform(self, X: np.ndarray):
-        """Inverse transform numerical columns (unscale)."""
+        '''Inverse transform numerical columns (unscale).'''
         if not self._is_fitted:
-            raise RuntimeError("Transformer must be fitted before inverse_transform.")
+            raise RuntimeError('Transformer must be fitted before inverse_transform.')
 
         cat_dims = self.get_cat_dims()
         bool_dims = self.get_bool_dims()
@@ -180,7 +180,7 @@ class DataTransformer:
         return result
 
 class BaseData:
-    """Base class for data preprocessing with common functionality for VehicleData and SyntheticData"""
+    '''Base class for data preprocessing with common functionality for VehicleData and SyntheticData'''
     
     def __init__(self):
         # These will be set by child classes
@@ -190,25 +190,25 @@ class BaseData:
         self.ordered_cols = None
         
     def _categorize_columns(self):
-        """Categorize columns into different types (date, boolean, numerical, categorical)"""
+        '''Categorize columns into different types (date, boolean, numerical, categorical)'''
         if self.X_raw is None:
-            raise ValueError("X_raw must be set before categorizing columns")
+            raise ValueError('X_raw must be set before categorizing columns')
             
-        self.date_cols = self.X_raw.select_dtypes(include=["datetime"]).columns.tolist()
-        self.bool_cols = self.X_raw.columns[self.X_raw.columns.str.contains("FLAG")].tolist()
-        numerical_cols = self.X_raw.select_dtypes(include=["int64", "float64", "int32"]).columns.tolist()
-        id_cols = self.X_raw.columns[self.X_raw.columns.str.contains("ID") & ~self.X_raw.columns.isin(self.bool_cols)].tolist() #"VOTERID_FLAG"
+        self.date_cols = self.X_raw.select_dtypes(include=['datetime']).columns.tolist()
+        self.bool_cols = self.X_raw.columns[self.X_raw.columns.str.contains('FLAG')].tolist()
+        numerical_cols = self.X_raw.select_dtypes(include=['int64', 'float64', 'int32']).columns.tolist()
+        id_cols = self.X_raw.columns[self.X_raw.columns.str.contains('ID') & ~self.X_raw.columns.isin(self.bool_cols)].tolist() #'VOTERID_FLAG'
         self.num_cols = [i for i in numerical_cols if i not in id_cols and i not in self.bool_cols]
-        categorical_cols = self.X_raw.select_dtypes(include=["object"]).columns.tolist()
+        categorical_cols = self.X_raw.select_dtypes(include=['object']).columns.tolist()
         self.cat_cols = categorical_cols + id_cols
         self.ordered_cols = self.X_raw.columns.tolist()
     
     def transform(self, X: pd.DataFrame, scaler_type: Literal['standard', 'minmax'] = 'standard',
                   fitted_scaler=None, fitted_ohe=None):
-        """Transform data using specified scaler"""
+        '''Transform data using specified scaler'''
         valid_scalers = ['standard', 'minmax']
         if scaler_type.lower() not in valid_scalers:
-            raise ValueError(f"scaler_type must be one of {valid_scalers}, got '{scaler_type}'")
+            raise ValueError(f'scaler_type must be one of {valid_scalers}, got {scaler_type}')
 
         if scaler_type.lower() == 'minmax':
             scaler = MinMaxScaler()
@@ -217,22 +217,22 @@ class BaseData:
         return Transform(self, X=X, scaler=scaler, fitted_scaler=fitted_scaler, fitted_ohe=fitted_ohe)
     
     def get_X_train(self, array_format=True, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        """Get transformed training data"""
+        '''Get transformed training data'''
         return self.transform(X=self.X_raw, scaler_type=scaler_type).transform_input(array_format=array_format)
 
     def get_ohe_dict(self):
-        """Get one-hot encoding feature index mapping as a dictionary"""
+        '''Get one-hot encoding feature index mapping as a dictionary'''
         return self.transform(X=self.X_raw).get_OHE_columns_index()
 
     def create_transformer(self, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        """Create a new DataTransformer instance with this data's column metadata.
+        '''Create a new DataTransformer instance with this data's column metadata.
 
         This method creates a transformer that can be fitted on training data
         and then applied to validation/test data without data leakage.
 
         Returns:
             DataTransformer: Unfitted transformer with column metadata
-        """
+        '''
         return DataTransformer(
             cat_cols=self.cat_cols,
             num_cols=self.num_cols,
@@ -248,23 +248,22 @@ class VehicleData(BaseData):
         self.df['DISBURSAL_DATE'] = pd.to_datetime(self.df['DISBURSAL_DATE'], format='%d-%m-%Y')
         self.df['DATE_OF_BIRTH'] = pd.to_datetime(self.df['DATE_OF_BIRTH'], format='%d-%m-%Y')
         self.df['AGE_DISBURSMENT'] = (self.df['DISBURSAL_DATE'] - self.df['DATE_OF_BIRTH']).dt.days // 365
-        self.df['AVERAGE_ACCT_AGE'] = self.transform_yrs_mon('AVERAGE_ACCT_AGE')
         self.df['CREDIT_HISTORY_LENGTH'] = self.transform_yrs_mon('CREDIT_HISTORY_LENGTH')
         self.df.fillna({'EMPLOYMENT_TYPE': 'Not provided'}, inplace=True)
-        self.df['IS_SALARIED'] = self.df['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
-        self.df_wo_filter = self.df.drop([ "DISBURSAL_DATE","UNIQUEID", "CURRENT_PINCODE_ID", "SUPPLIER_ID", "EMPLOYEE_CODE_ID", "BRANCH_ID", "DATE_OF_BIRTH", "PERFORM_CNS_SCORE", "STATE_ID", "MANUFACTURER_ID", "MOBILENO_AVL_FLAG"], axis = 1)
-        self.X_raw = self.df_wo_filter.drop(["LOAN_DEFAULT"], axis = 1)
-        self.y = self.df_wo_filter["LOAN_DEFAULT"]
+        self.df_wo_filter = self.df.drop([ 'DISBURSAL_DATE','UNIQUEID', 'CURRENT_PINCODE_ID', 'SUPPLIER_ID', 'EMPLOYEE_CODE_ID', 'BRANCH_ID', 'DATE_OF_BIRTH', 'PERFORM_CNS_SCORE', 'STATE_ID', 'MANUFACTURER_ID', 'MOBILENO_AVL_FLAG',
+                                          'PRI_SANCTIONED_AMOUNT', 'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT'], axis = 1) # high correlation
+        self.X_raw = self.df_wo_filter.drop(['LOAN_DEFAULT'], axis = 1)
+        self.y = self.df_wo_filter['LOAN_DEFAULT']
         
         # Categorize columns using parent class method
         self._categorize_columns()
 
     def import_data(self, train: bool):
-        path = os.getenv('DATASET_PATH', "C:/Users/midon/.cache/kagglehub/datasets/avikpaul4u/vehicle-loan-default-prediction/versions/4/")
+        path = os.getenv('DATASET_PATH', 'C:/Users/midon/.cache/kagglehub/datasets/avikpaul4u/vehicle-loan-default-prediction/versions/4/')
         if train:
-            df = pd.read_csv(path + "train.csv")
+            df = pd.read_csv(path + 'train.csv')
         else:
-            df = pd.read_csv(path + "test.csv")
+            df = pd.read_csv(path + 'test.csv')
         return df 
     
     def transform_yrs_mon(self, col_name: str):
@@ -281,7 +280,7 @@ class SyntheticData(BaseData):
         super().__init__()
         self.df = data
         self.y = data['LOAN_DEFAULT']
-        self.X_raw = self.df.drop(["LOAN_DEFAULT"], axis=1)
+        self.X_raw = self.df.drop(['LOAN_DEFAULT'], axis=1)
         self._categorize_columns()
 
 class Transform:
@@ -311,7 +310,7 @@ class Transform:
         cat_dict = {}
         for col in self.cat_cols:
             unique_values = self.df[col].unique()
-            cat_dict[col] = {"n":len(unique_values), "values": unique_values}
+            cat_dict[col] = {'n':len(unique_values), 'values': unique_values}
         return cat_dict
     
     def get_min_max(self):
@@ -353,7 +352,7 @@ class Transform:
                     if start_ind is None:
                         start_ind = j 
                     count += 1
-            features_dict[ohe_features[i]] = {"start": start_ind, "end": start_ind + count - 1 if start_ind is not None else None}
+            features_dict[ohe_features[i]] = {'start': start_ind, 'end': start_ind + count - 1 if start_ind is not None else None}
         return features_dict
 
     #Before encoding, should check how many categories are there to expect

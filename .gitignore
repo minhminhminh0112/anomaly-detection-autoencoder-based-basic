@@ -2,3 +2,6 @@
 /.venv
 /basic_autoencoder_best.pth
 /__pycache__
+/synthetic-data/__pycache__
+/mlruns
+/saved_models

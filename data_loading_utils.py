@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import PowerTransformer
-from preprocessing import VehicleData, DataTransformer
+from preprocessing.preprocessing import VehicleData, DataTransformer
 import json
 
 def load_final_data():
