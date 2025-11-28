@@ -9,176 +9,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv('.env.local')
 
-
-class DataTransformer:
-    '''
-    Reusable data transformer that can be fitted on training data and applied to any dataset.
-    This class separates transformation logic from data loading to prevent data leakage.
-    '''
-
-    def __init__(self, cat_cols: list, num_cols: list, bool_cols: list, date_cols: list,
-                 scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        
-        self.cat_cols = cat_cols
-        self.num_cols = num_cols
-        self.bool_cols = bool_cols
-        self.date_cols = date_cols
-        self.scaler_type = scaler_type
-
-        # These will be set during fit()
-        self.scaler = None
-        self.ohe = None
-        self.input_cols = None
-        self._is_fitted = False
-
-    @classmethod
-    def from_data(cls, X: pd.DataFrame, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        '''
-        Create and fit a transformer directly from a DataFrame.
-        Automatically categorizes columns and fits transformers.
-
-        Returns:
-            DataTransformer: Fitted transformer ready to use
-        '''
-        # Categorize columns based on X
-        date_cols = X.select_dtypes(include=['datetime']).columns.tolist()
-        bool_cols = X.columns[(X.columns.str.contains('FLAG')& (X.columns!= 'SUM_FLAGS'))].tolist()
-        numerical_cols = X.select_dtypes(include=['int64', 'float64', 'int32']).columns.tolist()
-        id_cols = X.columns[X.columns.str.contains('ID') & ~X.columns.isin(bool_cols)].tolist()
-        num_cols = [i for i in numerical_cols if i not in id_cols and i not in bool_cols]
-        categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
-        cat_cols = categorical_cols + id_cols
-
-        transformer = cls(
-            cat_cols=cat_cols,
-            num_cols=num_cols,
-            bool_cols=bool_cols,
-            date_cols=date_cols,
-            scaler_type=scaler_type
-        )
-
-        transformer.fit(X)
-        return transformer
-
-    def fit(self, X: pd.DataFrame):
-        '''Fit scaler and one-hot encoder on training data.'''
-        if self.scaler_type.lower() == 'minmax':
-            self.scaler = MinMaxScaler()
-        else:
-            self.scaler = StandardScaler()
-
-        # Fit scaler on numerical + date columns
-        if self.num_cols or self.date_cols:
-            num_df = pd.concat([X[self.num_cols], X[self.date_cols].astype('int64')], axis=1)
-            self.scaler.fit(num_df)
-
-        # Fit one-hot encoder on categorical columns
-        if self.cat_cols:
-            self.ohe = OneHotEncoder()
-            self.ohe.fit(X[self.cat_cols])
-            ohe_cols = self.ohe.get_feature_names_out().tolist()
-            ohe_cols = [str(col) for col in ohe_cols]
-        else:
-            ohe_cols = []
-
-        self.input_cols = ohe_cols + self.bool_cols + self.num_cols + self.date_cols
-        self._is_fitted = True
-        return self
-
-    def transform(self, X: pd.DataFrame, array_format: bool = True):
-        '''Transform data using fitted scaler and encoder.'''
-        if not self._is_fitted:
-            raise RuntimeError('Transformer must be fitted before transform. Call fit() first.')
-
-        # One-hot encode categorical columns
-        if self.cat_cols and self.ohe is not None:
-            cat_arr = self.ohe.transform(X[self.cat_cols]).toarray().astype('float32')
-        else:
-            cat_arr = np.array([]).reshape(len(X), 0)
-
-        # Get boolean columns
-        bool_arr = np.asarray(X[self.bool_cols]).astype('float32')
-
-        # Scale numerical + date columns
-        if self.num_cols or self.date_cols:
-            num_df = pd.concat([X[self.num_cols], X[self.date_cols].astype('int64')], axis=1)
-            num_arr = self.scaler.transform(num_df).astype('float32')
-        else:
-            num_arr = np.array([]).reshape(len(X), 0)
-
-        if array_format:
-            input_arr = np.concatenate([cat_arr, bool_arr, num_arr], axis=1)
-            return input_arr.astype('float32')
-        else:
-            # Return as DataFrame
-            cat_df = pd.DataFrame(cat_arr, columns=self.get_ohe_cols())
-            bool_df = pd.DataFrame(bool_arr, columns=self.bool_cols)
-            num_df = pd.DataFrame(num_arr, columns=self.num_cols + self.date_cols)
-            return pd.concat([cat_df, bool_df, num_df], axis=1)
-
-    def fit_transform(self, X: pd.DataFrame, array_format: bool = True):
-        '''Fit on training data and transform it.'''
-        self.fit(X)
-        return self.transform(X, array_format=array_format)
-
-    def get_ohe_cols(self):
-        '''Get one-hot encoded column names.'''
-        if not self._is_fitted or self.ohe is None:
-            return []
-        return [str(col) for col in self.ohe.get_feature_names_out()]
-
-    def get_ohe_dict(self):
-        '''Get one-hot encoding feature index mapping as a dictionary.'''
-        if not self._is_fitted or self.ohe is None:
-            return {}
-
-        ohe_features = self.ohe.feature_names_in_
-        ohe_features_out = self.ohe.get_feature_names_out()
-        features_dict = {}
-
-        for i in range(len(ohe_features)):
-            count = 0
-            start_ind = None
-            for j in range(len(ohe_features_out)):
-                if ohe_features[i] in ohe_features_out[j]:
-                    if start_ind is None:
-                        start_ind = j
-                    count += 1
-            features_dict[ohe_features[i]] = {
-                'start': start_ind,
-                'end': start_ind + count - 1 if start_ind is not None else None
-            }
-        return features_dict
-
-    def get_cat_dims(self):
-        '''Get number of categorical dimensions (one-hot encoded).'''
-        return len(self.get_ohe_cols())
-
-    def get_bool_dims(self):
-        '''Get number of boolean dimensions.'''
-        return len(self.bool_cols)
-
-    def get_cont_dims(self):
-        '''Get number of continuous dimensions (numerical + date).'''
-        return len(self.num_cols) + len(self.date_cols)
-
-    def inverse_transform(self, X: np.ndarray):
-        '''Inverse transform numerical columns (unscale).'''
-        if not self._is_fitted:
-            raise RuntimeError('Transformer must be fitted before inverse_transform.')
-
-        cat_dims = self.get_cat_dims()
-        bool_dims = self.get_bool_dims()
-
-        # Extract continuous part and inverse transform
-        cont_data = X[:, (cat_dims + bool_dims):]
-        cont_data_unscaled = self.scaler.inverse_transform(cont_data)
-
-        # Reconstruct full array
-        result = X.copy()
-        result[:, (cat_dims + bool_dims):] = cont_data_unscaled
-        return result
-
 class BaseData:
     '''Base class for data preprocessing with common functionality for VehicleData and SyntheticData'''
     
@@ -224,23 +54,6 @@ class BaseData:
         '''Get one-hot encoding feature index mapping as a dictionary'''
         return self.transform(X=self.X_raw).get_OHE_columns_index()
 
-    def create_transformer(self, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        '''Create a new DataTransformer instance with this data's column metadata.
-
-        This method creates a transformer that can be fitted on training data
-        and then applied to validation/test data without data leakage.
-
-        Returns:
-            DataTransformer: Unfitted transformer with column metadata
-        '''
-        return DataTransformer(
-            cat_cols=self.cat_cols,
-            num_cols=self.num_cols,
-            bool_cols=self.bool_cols,
-            date_cols=self.date_cols,
-            scaler_type=scaler_type
-        )
-
 class VehicleData(BaseData):
     def __init__(self, train_mode: bool = True):
         super().__init__()
@@ -251,7 +64,7 @@ class VehicleData(BaseData):
         self.df['CREDIT_HISTORY_LENGTH'] = self.transform_yrs_mon('CREDIT_HISTORY_LENGTH')
         self.df.fillna({'EMPLOYMENT_TYPE': 'Not provided'}, inplace=True)
         self.df_wo_filter = self.df.drop([ 'DISBURSAL_DATE','UNIQUEID', 'CURRENT_PINCODE_ID', 'SUPPLIER_ID', 'EMPLOYEE_CODE_ID', 'BRANCH_ID', 'DATE_OF_BIRTH', 'PERFORM_CNS_SCORE', 'STATE_ID', 'MANUFACTURER_ID', 'MOBILENO_AVL_FLAG',
-                                          'PRI_SANCTIONED_AMOUNT', 'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT'], axis = 1) # high correlation
+                                          'PRI_SANCTIONED_AMOUNT', 'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT', 'AVERAGE_ACCT_AGE'], axis = 1) # high correlation
         self.X_raw = self.df_wo_filter.drop(['LOAN_DEFAULT'], axis = 1)
         self.y = self.df_wo_filter['LOAN_DEFAULT']
         

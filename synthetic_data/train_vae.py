@@ -47,18 +47,18 @@ epochs = 400
 learning_rate = 1e-4  # Reduced learning rate for more stable training
 
 # Import and transform data
-vehicle= pp.VehicleData()
-X_train = vehicle.get_X_train(array_format= True,scaler_type=scaler_type)
-
+vehicle= pp.VehicleData(train_mode=True)
+transformer = vehicle.transform(vehicle.X_raw)
+X_transformed = vehicle.get_X_train(array_format=True, scaler_type=scaler_type)
 y = vehicle.y
-cat_dims = X_train.shape[1]-(len(vehicle.num_cols) + len(vehicle.date_cols)) #42
+cat_dims = X_transformed.shape[1]-(len(vehicle.num_cols) + len(vehicle.date_cols)) #42
 
-train_loader = DataLoader(dataset = X_train,
+train_loader = DataLoader(dataset = X_transformed,
                                     batch_size = batch_size,
                                     worker_init_fn=seed_worker,
                                     generator=g)
 model = VariationalAutoencoder(latent_dims= latent_dims, latent_dist = latent_dist,
-                                                input_dims= X_train.shape[1],
+                                                input_dims= X_transformed.shape[1],
                                                 cat_dims=cat_dims,
                                                 layers_encoder= layers_encoder, layers_decoder=layers_decoder,
                                                 pre_cont_layer=pre_cont_layer, pre_cat_layer= pre_cat_layer)
@@ -113,7 +113,7 @@ if __name__ == "__main__":
             "epochs": epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
-            "input_dims": X_train.shape[1],
+            "input_dims": X_transformed.shape[1],
             "latent_dims": latent_dims,
             "cat_dims": cat_dims,
             "layers_encoder": layers_encoder, 
@@ -133,13 +133,13 @@ if __name__ == "__main__":
         
         # Create the files first, then log them as artifacts
         torch.save(model.state_dict(), path + "/weights.pth")
-        np.save(path + "/X_samples.npy", X_train[:51])
+        np.save(path + "/X_samples.npy", X_transformed[:51])
         with open(path + "/model_architecture.txt", "w") as f:
             f.write(str(model))
-        with open(path + "/vehicle_preprocessor.pkl", "wb") as f:
-            pickle.dump(vehicle, f)
+        with open(path + '/transformer.pkl', 'wb') as f:
+            pickle.dump(transformer, f)
         # Now log the artifacts (files must exist first)
-        mlflow.log_artifact(path + "/vehicle_preprocessor.pkl")
+        mlflow.log_artifact(path + "/transformer.pkl")
         mlflow.log_artifact(path + "/weights.pth")
         mlflow.log_artifact(path + "/X_samples.npy")
         mlflow.log_artifact(path + "/model_architecture.txt")
