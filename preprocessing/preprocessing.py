@@ -106,7 +106,7 @@ def feature_engineer(data:BaseData):
     from sklearn.preprocessing import PowerTransformer
     columns_high_corr_drop = ['ASSET_COST','CREDIT_HISTORY_LENGTH', 'AADHAR_FLAG','PRI_ACTIVE_ACCTS','SEC_ACTIVE_ACCTS',
                               'PRI_NO_OF_ACCTS','SEC_NO_OF_ACCTS','PRI_DISBURSED_AMOUNT','SEC_DISBURSED_AMOUNT',
-                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT'] + data.cat_cols
+                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT'] #+ data.cat_cols
     featured_df = data.X_raw.drop(columns=columns_high_corr_drop, axis = 1)
     featured_df['SALARIED_FLAG'] = data.X_raw['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
     featured_df['PRI_SANCTION_GAP'] = data.X_raw['PRI_SANCTIONED_AMOUNT'] - data.X_raw['PRI_DISBURSED_AMOUNT']
