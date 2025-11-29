@@ -62,9 +62,11 @@ class VehicleData(BaseData):
         self.df['DATE_OF_BIRTH'] = pd.to_datetime(self.df['DATE_OF_BIRTH'], format='%d-%m-%Y')
         self.df['AGE_DISBURSMENT'] = (self.df['DISBURSAL_DATE'] - self.df['DATE_OF_BIRTH']).dt.days // 365
         self.df['CREDIT_HISTORY_LENGTH'] = self.transform_yrs_mon('CREDIT_HISTORY_LENGTH')
+        self.df['AVERAGE_ACCT_AGE'] = self.transform_yrs_mon('AVERAGE_ACCT_AGE')
         self.df.fillna({'EMPLOYMENT_TYPE': 'Not provided'}, inplace=True)
-        self.df_wo_filter = self.df.drop([ 'DISBURSAL_DATE','UNIQUEID', 'CURRENT_PINCODE_ID', 'SUPPLIER_ID', 'EMPLOYEE_CODE_ID', 'BRANCH_ID', 'DATE_OF_BIRTH', 'PERFORM_CNS_SCORE', 'STATE_ID', 'MANUFACTURER_ID', 'MOBILENO_AVL_FLAG',
-                                          'PRI_SANCTIONED_AMOUNT', 'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT', 'AVERAGE_ACCT_AGE'], axis = 1) # high correlation
+        self.df_wo_filter = self.df.drop([ 'DISBURSAL_DATE','UNIQUEID', 'CURRENT_PINCODE_ID', 'SUPPLIER_ID', 'EMPLOYEE_CODE_ID', 
+                                          'BRANCH_ID', 'DATE_OF_BIRTH', 'PERFORM_CNS_SCORE', 'STATE_ID', 'MANUFACTURER_ID', 
+                                          'MOBILENO_AVL_FLAG'], axis = 1) 
         self.X_raw = self.df_wo_filter.drop(['LOAN_DEFAULT'], axis = 1)
         self.y = self.df_wo_filter['LOAN_DEFAULT']
         
@@ -89,12 +91,50 @@ class VehicleData(BaseData):
         return split_tab['years'] * 12 + split_tab['months']
 
 class SyntheticData(BaseData):
-    def __init__(self, data: pd.DataFrame):
+    def __init__(self, path: str):
         super().__init__()
-        self.df = data
-        self.y = data['LOAN_DEFAULT']
-        self.X_raw = self.df.drop(['LOAN_DEFAULT'], axis=1)
+        if path.endswith('.csv'):
+            self.path = path
+        else:
+            print('Wrong path: the path must be a csv file')
+        self.df = pd.read_csv(self.path)
+        self.X_raw = self.df.drop(columns='LOAN_DEFAULT')
+        self.y = self.df['LOAN_DEFAULT']
         self._categorize_columns()
+
+def feature_engineer(data:BaseData):
+    from sklearn.preprocessing import PowerTransformer
+    columns_high_corr_drop = ['ASSET_COST','CREDIT_HISTORY_LENGTH', 'AADHAR_FLAG','PRI_ACTIVE_ACCTS','SEC_ACTIVE_ACCTS',
+                              'PRI_NO_OF_ACCTS','SEC_NO_OF_ACCTS','PRI_DISBURSED_AMOUNT','SEC_DISBURSED_AMOUNT',
+                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT'] + data.cat_cols
+    featured_df = data.X_raw.drop(columns=columns_high_corr_drop, axis = 1)
+    featured_df['SALARIED_FLAG'] = data.X_raw['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
+    featured_df['PRI_SANCTION_GAP'] = data.X_raw['PRI_SANCTIONED_AMOUNT'] - data.X_raw['PRI_DISBURSED_AMOUNT']
+    featured_df['SEC_SANCTION_GAP'] = data.X_raw['SEC_SANCTIONED_AMOUNT'] - data.X_raw['SEC_DISBURSED_AMOUNT']
+    featured_df['LTA_LTV'] = (data.X_raw['DISBURSED_AMOUNT'] / data.X_raw['ASSET_COST']) / data.X_raw['LTV'] * 100
+    featured_df['PRI_EMI_DISBURSED_RATIO'] = data.X_raw['PRIMARY_INSTAL_AMT'] / (data.X_raw['PRI_DISBURSED_AMOUNT']+1.1)
+    featured_df['SEC_EMI_DISBURSED_RATIO'] = data.X_raw['SEC_INSTAL_AMT'] / (data.X_raw['SEC_DISBURSED_AMOUNT']+1.1)
+    featured_df['OUT_BALANCE_DISBURSED_RATIO'] = (data.X_raw['PRI_CURRENT_BALANCE'] + data.X_raw['SEC_CURRENT_BALANCE']) / (data.X_raw['PRI_DISBURSED_AMOUNT']+ data.X_raw['SEC_DISBURSED_AMOUNT']+1.1)
+    non_log_features = ['LTV', 'AGE_DISBURSMENT'] + data.bool_cols + data.cat_cols + data.date_cols
+    log_features = [col for col in featured_df.columns if col not in non_log_features]
+    featured_log_data = np.log(featured_df[log_features]+1.1)
+        
+    yeojohnson_cols = ['PRI_CURRENT_BALANCE', 'SEC_CURRENT_BALANCE',
+                        'PRI_SANCTION_GAP', 'SEC_SANCTION_GAP','OUT_BALANCE_DISBURSED_RATIO']
+    # Yeo-Johnson transformations
+    print("Applying Yeo-Johnson transformations...")
+    for col in yeojohnson_cols:
+        yeojohnson = PowerTransformer(method='yeo-johnson')
+        featured_log_data[col] = yeojohnson.fit_transform(featured_df[[col]])
+    cols_need_adding = [col for col in non_log_features if col not in columns_high_corr_drop]
+    final_X = pd.concat([featured_log_data, data.X_raw[cols_need_adding]], axis=1)
+    final_data = type(data).__new__(type(data))
+    final_data.df = data.df  # Keep original df
+    final_data.X_raw = final_X  #
+    final_data.y = data.y 
+    final_data._categorize_columns()  # for transform function later
+    
+    return final_data
 
 class Transform:
     def __init__(self, data_class: BaseData, X: pd.DataFrame, scaler: Union[StandardScaler, MinMaxScaler],

@@ -2,6 +2,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_sc
 import pandas as pd
 import numpy as np 
 from typing import Union
+
 def evaluate_metrics(real_labels, pred_labels):
     f1 = f1_score(real_labels, pred_labels)
     precision = precision_score(real_labels, pred_labels)

@@ -12,31 +12,38 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pickle
-from data_loading_utils import load_and_preprocess_vehicle_data
 from eval.evaluate_recon import evaluate_metrics, confusion_matrix_metrics
-
+from preprocessing.preprocessing import * 
+from sklearn.model_selection import train_test_split
 # Set random seed for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
 
 
 class BasicAutoencoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64, latent_dim=32):
+    """
+    A simple autoencoder with MSELoss for reconstructing transformed VehicleData.
+    """
+    def __init__(self, input_dim,hidden_dim_1 = 256, hidden_dim_2=64, latent_dim=32):
         super(BasicAutoencoder, self).__init__()
 
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(input_dim, hidden_dim_1),
             nn.ReLU(),
-            nn.Linear(hidden_dim, latent_dim),
+            nn.Linear(hidden_dim_1, hidden_dim_2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim_2, latent_dim),
             nn.ReLU()
         )
 
         # Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
+            nn.Linear(latent_dim, hidden_dim_2),
             nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim)
+            nn.Linear(hidden_dim_2, hidden_dim_1),
+            nn.ReLU(),
+            nn.Linear(hidden_dim_1, input_dim)
         )
 
     def forward(self, x):
@@ -46,7 +53,7 @@ class BasicAutoencoder(nn.Module):
 
 
 def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
-                            hidden_dim=64, latent_dim=32):
+                            hidden_dim_1=256, hidden_dim_2=64, latent_dim=32):
     """
     Train a basic autoencoder on transformed VehicleData using MSELoss.
 
@@ -57,103 +64,104 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         hidden_dim: Hidden layer dimension
         latent_dim: Latent space dimension
     """
-
-    X_train, X_val, y_train, y_val, transformer = load_and_preprocess_vehicle_data() #path = 'rf_rfe_selected_features.json'
-    #     test_size=0.2,
-    #     random_state=42,
-    #     scaler_type='standard'
-    # )
-
+    path = 'synthetic_data/synthetic_data.csv'
+    synth = SyntheticData(path)
+    # synth.bool_cols
+    final_data = feature_engineer(synth)
+    X_transformed = final_data.get_X_train(array_format = True)
+    y = final_data.y
+    transformer = final_data.transform(final_data.X_raw)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_transformed, y, test_size=0.2, random_state=42
+    )
+    y_train = np.array(y_train)
     input_dim = X_train.shape[1]
 
     train_dataset = TensorDataset(torch.FloatTensor(X_train))
-    val_dataset = TensorDataset(torch.FloatTensor(X_val))
-
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
 
-    model = BasicAutoencoder(input_dim, hidden_dim, latent_dim).to(device)
-    # Separate losses for numerical and boolean features
-    num_criterion = nn.MSELoss()
-    bool_criterion = nn.BCEWithLogitsLoss()
+    model = BasicAutoencoder(input_dim, hidden_dim_1, hidden_dim_2, latent_dim).to(device)
+    num_criterion = nn.MSELoss(reduction='none')
+    bool_criterion = nn.BCEWithLogitsLoss(reduction='none')
     n_bool_cols = len(transformer.bool_cols)
-    print('bool cols: ',transformer.bool_cols)
+    bool_weight = 1 #n_bool_cols / input_dim
+    num_weight = 8
+
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     print(f"\nModel architecture:")
     print(model)
-    print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters())}")
-
+   
     # Training loop
     print(f"\nStarting training for {epochs} epochs...")
-    best_fraud_rate = float('inf')
+    best_fraud_rate = 0.0
+    best_epoch = 0 
 
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
-
+        num_losses = 0.0
+        bool_losses = 0.0
         for batch in train_loader:
             x = batch[0].to(device)
 
-            # Forward pass
             reconstructed = model(x)
             num_loss = num_criterion(reconstructed[:,n_bool_cols:], x[:,n_bool_cols:])
             bool_loss = bool_criterion(reconstructed[:,:n_bool_cols], x[:,:n_bool_cols])
-            loss = num_loss + bool_loss
+
+            num_losses += num_loss.mean().item()
+            bool_losses += bool_loss.mean().item()
+
+            num_loss_sum = torch.sum(num_loss, dim=1)  
+            bool_loss_sum = torch.sum(bool_loss, dim=1) 
+            loss = torch.mean(num_weight * num_loss_sum + bool_weight * bool_loss_sum)
+                            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
 
-        train_loss /= len(train_loader)
-
         model.eval()
-        # Fraud detection analysis every 20 epochs
-        if (epoch + 1) % 20 == 0 or epoch == 0:
-            print(f"\nEpoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.6f}")
-            model.eval()
-            with torch.no_grad():
-                # Calculate per-sample losses on training data
-                X_train_tensor = torch.FloatTensor(X_train).to(device)
-                reconstructed_train = model(X_train_tensor)
-                per_sample_loss = torch.mean((reconstructed_train - X_train_tensor) ** 2, dim=1) #MSE works best, instead of separating losses for bool and num
-                per_sample_loss = per_sample_loss.cpu().numpy()
-                n_fraud_labels = y_train.sum()
+        with torch.no_grad():
+            # Calculate per-sample losses on training data
+            X_train_tensor = torch.FloatTensor(X_train).to(device)
+            reconstructed_train = model(X_train_tensor)
+            
+            num_loss = num_criterion(reconstructed_train[:,n_bool_cols:], X_train_tensor[:,n_bool_cols:])
+            bool_loss = bool_criterion(reconstructed_train[:,:n_bool_cols], X_train_tensor[:,:n_bool_cols])
+            
+            num_loss_sum = torch.sum(num_loss, dim=1) #  
+            bool_loss_sum = torch.sum(bool_loss, dim=1) 
+            
+            per_sample_loss = num_weight * num_loss_sum + bool_weight * bool_loss_sum
+            per_sample_loss = per_sample_loss.cpu().numpy()
+            n_fraud_labels = y_train.sum()
 
-                top_loss_idx = np.argsort(per_sample_loss)[-n_fraud_labels:]
-                top_losses = per_sample_loss[top_loss_idx]
-                top_loss_labels = y_train[top_loss_idx]
+            top_loss_idx = np.argsort(per_sample_loss)[-n_fraud_labels:]
+            top_loss_labels = y_train[top_loss_idx]
 
-                fraud_count = top_loss_labels.sum()
-                detected_fraud_rate = fraud_count / n_fraud_labels
+            fraud_count = top_loss_labels.sum()
+            detected_fraud_rate = fraud_count / n_fraud_labels
 
-                print(f"      Top {n_fraud_labels} highest loss samples: {fraud_count} frauds ({detected_fraud_rate:.1%})")
-                print(f"      Mean loss in top {n_fraud_labels}: {top_losses.mean():.6f}")
-                print(f"      Loss range: [{top_losses.min():.6f}, {top_losses.max():.6f}]")
-                pred_labels = np.zeros_like(y_train)
-                pred_labels[top_loss_idx] = 1
-                evaluate_metrics(y_train, pred_labels)
-                confusion_matrix_metrics(y_train, pred_labels)
-        # Save best model
-        if detected_fraud_rate < best_fraud_rate:
-            best_fraud_rate = detected_fraud_rate
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': train_loss,
-                'detected_fraud_rate': detected_fraud_rate,
-                'input_dim': input_dim,
-                'hidden_dim': hidden_dim,
-                'latent_dim': latent_dim
-            }, 'basic_autoencoder_best.pth')
-
-    print(f"\nTraining complete! Best fraud rate: {best_fraud_rate:.6f}")
-    print("Model saved as 'basic_autoencoder_best.pth'")
-
+            pred_labels = np.zeros_like(y_train)
+            pred_labels[top_loss_idx] = 1
+            
+        print("\n")
+        print(f"EPOCH [{epoch+1}/{epochs}] - Train Loss: {train_loss:.6f}")
+        print(f"Num loss sum: {num_losses/len(train_loader):.4f}, Bool loss sum: {bool_losses/len(train_loader):.4f}")
+        print(f"      Top {n_fraud_labels} highest loss samples: {fraud_count} frauds ({detected_fraud_rate:.1%})")
+        
+        evaluate_metrics(y_train, pred_labels)
+        # confusion_matrix_metrics(y_train, pred_labels)
+        if detected_fraud_rate > best_fraud_rate:
+            best_fraud_rate = detected_fraud_rate.copy()
+            best_epoch = epoch
+        print(f'best detected fraud rate at epoch {best_epoch}: {best_fraud_rate:.2%}')
+        
     return model, transformer
 
 
@@ -162,7 +170,8 @@ if __name__ == "__main__":
     model, transformer = train_basic_autoencoder(
         epochs=200,
         batch_size=256,
-        learning_rate=1e-3,
-        hidden_dim=128,
+        learning_rate=1e-4,
+        hidden_dim_1=256,
+        hidden_dim_2=64,
         latent_dim=16
     )

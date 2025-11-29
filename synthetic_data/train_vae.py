@@ -28,7 +28,7 @@ def seed_worker(worker_id):
 g = torch.Generator()
 g.manual_seed(seed)
 
-experiment_name = "first_vae_experiment"
+experiment_name = "vae_full_feautures"
 
 # Configurations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
 scaler_type = 'standard'  # 'standard' or 'minmax'
@@ -134,14 +134,17 @@ if __name__ == "__main__":
         # Create the files first, then log them as artifacts
         torch.save(model.state_dict(), path + "/weights.pth")
         np.save(path + "/X_samples.npy", X_transformed[:51])
-        with open(path + "/model_architecture.txt", "w") as f:
-            f.write(str(model))
+        np.save(path + "/y.npy", y)
         with open(path + '/transformer.pkl', 'wb') as f:
             pickle.dump(transformer, f)
+        with open(path + "/model_architecture.txt", "w") as f:
+            f.write(str(model))
+        
         # Now log the artifacts (files must exist first)
         mlflow.log_artifact(path + "/transformer.pkl")
         mlflow.log_artifact(path + "/weights.pth")
         mlflow.log_artifact(path + "/X_samples.npy")
+        mlflow.log_artifact(path + "/y.npy")
         mlflow.log_artifact(path + "/model_architecture.txt")
 
         print(f"Run completed: {run.info.run_id}")

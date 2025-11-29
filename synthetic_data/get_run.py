@@ -60,6 +60,18 @@ def get_test_data_from_run(run_id: str):
     y_test = np.load(os.path.join(path, "y_test.npy"))
     return X_test, y_test
 
+def get_y_from_run(run_id: str):
+    client = MlflowClient()
+    mlruns_dir = "mlruns"
+    mlflow.set_tracking_uri(mlruns_dir)
+    run = mlflow.get_run(run_id)
+    finished_runs = get_finished_runs(run.info.experiment_id)
+    exp_run = mlflow.get_run(finished_runs[0])
+    experiment = mlflow.get_experiment(exp_run.info.experiment_id)
+    path = os.path.join("saved_models", experiment.name)
+    y = np.load(os.path.join(path, "y.npy"))
+    return y
+
 def get_model_from_run(run_id: str, input_dims_manual:int = None):
     """
     Retrieve model architecture from a given MLflow run ID.
@@ -103,9 +115,9 @@ def get_reconstructed_data_from_run(run_id: str) -> np.array:
     model = get_model_from_run(run_id)
     params = get_hyperparams_from_run(run_id)
     scaler_type = params.get("scaler_type", "standard")
-    preprocessor = get_preprocessor_from_experiment(run_id)
-    X_train = preprocessor.get_X_train(array_format=True, scaler_type=scaler_type)
-    X_tensor = torch.tensor(X_train, dtype=torch.float32)
+    transformer = get_transformer_from_experiment(run_id)
+    X = transformer.transform_input()
+    X_tensor = torch.tensor(X, dtype=torch.float32)
 
     model.load_state_dict(state_dict)
     model.eval()
