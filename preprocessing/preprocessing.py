@@ -106,8 +106,11 @@ def feature_engineer(data:BaseData):
     from sklearn.preprocessing import PowerTransformer
     columns_high_corr_drop = ['ASSET_COST','CREDIT_HISTORY_LENGTH', 'AADHAR_FLAG','PRI_ACTIVE_ACCTS','SEC_ACTIVE_ACCTS',
                               'PRI_NO_OF_ACCTS','SEC_NO_OF_ACCTS','PRI_DISBURSED_AMOUNT','SEC_DISBURSED_AMOUNT',
-                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT'] #+ data.cat_cols
+                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT', 'AVERAGE_ACCT_AGE', 
+                              'EMPLOYMENT_TYPE','DRIVING_FLAG', 'PAN_FLAG', 'PASSPORT_FLAG', 'SEC_OVERDUE_ACCTS', 'PRI_OVERDUE_ACCTS',
+                              'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS'] #+ data.cat_cols #remove AVERAGE_ACCT_AGE only to see if it works, random decision
     featured_df = data.X_raw.drop(columns=columns_high_corr_drop, axis = 1)
+    
     featured_df['SALARIED_FLAG'] = data.X_raw['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
     featured_df['PRI_SANCTION_GAP'] = data.X_raw['PRI_SANCTIONED_AMOUNT'] - data.X_raw['PRI_DISBURSED_AMOUNT']
     featured_df['SEC_SANCTION_GAP'] = data.X_raw['SEC_SANCTIONED_AMOUNT'] - data.X_raw['SEC_DISBURSED_AMOUNT']
@@ -128,6 +131,29 @@ def feature_engineer(data:BaseData):
         featured_log_data[col] = yeojohnson.fit_transform(featured_df[[col]])
     cols_need_adding = [col for col in non_log_features if col not in columns_high_corr_drop]
     final_X = pd.concat([featured_log_data, data.X_raw[cols_need_adding]], axis=1)
+    if 'PERFORM_CNS_SCORE_DESCRIPTION' not in columns_high_corr_drop:
+        category_mapping = {
+            'A-Very Low Risk': 'Low Risk',
+            'B-Very Low Risk': 'Low Risk',
+            'C-Very Low Risk':'Low Risk',
+            'D-Very Low Risk':'Low Risk',
+            'E-Low Risk': 'Low Risk',
+            'F-Low Risk':'Low Risk',
+            'G-Low Risk': 'Low Risk',
+            'H-Medium Risk':'Low Risk', 
+            'I-Medium Risk':'Low Risk',
+            'J-High Risk':'High Risk', 
+            'K-High Risk':'High Risk',
+            'L-Very High Risk':'High Risk', 
+            'M-Very High Risk':'High Risk',
+            'No Bureau History Available':'No Bureau History Available',
+            'Not Scored: No Activity seen on the customer (Inactive)':'Inactivity',
+            'Not Scored: No Updates available in last 36 months':'Inactivity',
+            'Not Scored: Not Enough Info available on the customer':'Lack Information',
+            'Not Scored: Only a Guarantor':'Lack Information',
+            'Not Scored: Sufficient History Not Available':'Lack Information'
+        }
+        final_X['PERFORM_CNS_SCORE_DESCRIPTION'] = data.X_raw.PERFORM_CNS_SCORE_DESCRIPTION.map(category_mapping)
     final_data = type(data).__new__(type(data))
     final_data.df = data.df  # Keep original df
     final_data.X_raw = final_X  #

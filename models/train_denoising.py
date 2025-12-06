@@ -12,7 +12,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pickle
-from train_helper import EarlyStopping 
+from train_helper import EarlyStoppingNew 
 from eval.evaluate_recon import evaluate_metrics, confusion_matrix_metrics
 from preprocessing.preprocessing import * 
 from sklearn.model_selection import train_test_split
@@ -118,7 +118,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     # epoch_pred_labels = {}
     # epoch_pred_labels['real_labels'] = y_train
     # epoch_pred_labels['epochs'] = {}
-    early_stopping_error = EarlyStopping(patience=patience)
+    early_stopping_error = EarlyStoppingNew(patience=patience)
 
     best_fraud_rate = 0.0
     best_epoch = 0 
@@ -130,6 +130,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     save_binary_losses = []
     save_normal_test_errors = []
     save_normal_train_errors = []
+    save_all_train_errors = []
     early_stopping_epoch_losses = []
     early_stopping_epoch_error = []
     f1_scores_train = []
@@ -160,17 +161,17 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
             pred_labels_error_train, pred_labels_error_test = get_error_score_prediction_train_test(X_train, X_test, top_n, model, 
                                                                                  n_binary_cols)
 
-            normal_train_error = get_error_score(model,X_train[y_train==0],n_binary_cols) 
-            normal_train_error = normal_train_error.mean()
-            normal_test_error = get_error_score(model,X_test[y_test==0],n_binary_cols) 
-            normal_test_error = normal_test_error.mean()
+            normal_train_error = get_error_score(model,X_train[y_train==0],n_binary_cols).mean()
+            train_error = get_error_score(model,X_train,n_binary_cols).mean()
+            normal_test_error = get_error_score(model,X_test[y_test==0],n_binary_cols).mean()
 
         save_train_loss.append(train_loss/len(train_loader))
         save_num_losses.append(num_losses/len(train_loader))
         save_binary_losses.append(binary_losses/len(train_loader))
         save_normal_test_errors.append(normal_test_error)
         save_normal_train_errors.append(normal_train_error)
-        
+        save_all_train_errors.append(train_error)
+
         print("\n")
         print(f"EPOCH [{epoch+1}/{epochs}] - Train Loss: {train_loss:.6f}")
         print(f"Num loss sum: {num_losses/len(train_loader):.4f}, Bool loss sum: {binary_losses/len(train_loader):.4f}")
@@ -180,7 +181,10 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         f1_error_test, detected_fraud_rate_error_test, recall_error_test, acc_error_test = evaluate_metrics(y_test, pred_labels_error_test)
         f1_scores_train.append(f1_error)
         f1_scores_test.append(f1_error_test)
-
+        print('ERROR train normal: ',normal_train_error)
+        print('ERROR train all: ', train_error)
+        print('ERROR test: ',normal_test_error)
+        
         if detected_fraud_rate_error > best_error_score_fraud_rate:
             best_error_score_fraud_rate = detected_fraud_rate_error
             best_error_score_epoch = epoch
@@ -191,15 +195,16 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
             best_epoch = epoch
         print(f'best precision based on error at epoch {best_epoch +1} TEST: {best_fraud_rate:.2%}')
 
-        if early_stopping_error(normal_train_error, normal_test_error, model):
+        if early_stopping_error(normal_train_error, train_error, model):
             print(f"\nTraining stopped at epoch {epoch}")
-            print(f"Loading best model with loss: {early_stopping_error.best_loss:.6f}")
+            print(f"Loading best model with loss: {early_stopping_error.best_train_loss:.6f}")
             best_model_state = early_stopping_error.best_model_state
             break
     save_epoch_losses = {'train_loss': save_train_loss,
                 'num loss': save_num_losses,
                 'bool loss': save_binary_losses,
                 'normal train error': save_normal_train_errors,
+                'all train error': save_all_train_errors,
                 'normal test error': save_normal_test_errors,
                 'f1 train': f1_scores_train,
                 'f1 test': f1_scores_test,
@@ -217,9 +222,9 @@ if __name__ == "__main__":
         hidden_dim_1=128,
         hidden_dim_2=32,
         latent_dim=16, 
-        patience=2
+        patience=3
     )
-    experiment_name = 'denoising_patience_2_with_normal_test_error_tracking'
+    experiment_name = 'denoising_patience_3_earlystopping_all_train_decreases'
     path = os.path.join("C:/Users/midon/Documents/anomaly-detection-autoencoder-based-basic/saved_models", experiment_name)
     if not os.path.exists(path):
         os.makedirs(path)
