@@ -1,8 +1,7 @@
 #PREPARE THE DATASET in a one hot encoded dict
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler,OneHotEncoder, PowerTransformer
 import torch
 from typing import Union, Literal, Optional
 import os
@@ -55,6 +54,7 @@ class BaseData:
         return self.transform(X=self.X_raw).get_OHE_columns_index()
 
 class VehicleData(BaseData):
+
     def __init__(self, train_mode: bool = True):
         super().__init__()
         self.df = self.import_data(train=train_mode)
@@ -102,37 +102,24 @@ class SyntheticData(BaseData):
         self.y = self.df['LOAN_DEFAULT']
         self._categorize_columns()
 
-def feature_engineer(data:BaseData):
-    from sklearn.preprocessing import PowerTransformer
-    columns_high_corr_drop = ['ASSET_COST','CREDIT_HISTORY_LENGTH', 'AADHAR_FLAG','PRI_ACTIVE_ACCTS','SEC_ACTIVE_ACCTS',
-                              'PRI_NO_OF_ACCTS','SEC_NO_OF_ACCTS','PRI_DISBURSED_AMOUNT','SEC_DISBURSED_AMOUNT',
-                              'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRIMARY_INSTAL_AMT', 'AVERAGE_ACCT_AGE', 
-                              'EMPLOYMENT_TYPE','DRIVING_FLAG', 'PAN_FLAG', 'PASSPORT_FLAG', 'SEC_OVERDUE_ACCTS', 'PRI_OVERDUE_ACCTS',
-                              'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS'] #+ data.cat_cols #remove AVERAGE_ACCT_AGE only to see if it works, random decision
-    featured_df = data.X_raw.drop(columns=columns_high_corr_drop, axis = 1)
+def feature_engineering(data:BaseData =None):
+    if data is None:
+        data = VehicleData()
+    X = data.X_raw
+    X_new = add_new_features(X)
+    # Drop highly correlated data --> See preprocessing/handle_correlation.ipynb
+    remove_cols = ['EMPLOYMENT_TYPE','ASSET_COST','AVERAGE_ACCT_AGE','SEC_CURRENT_BALANCE', 'PRI_SANCTIONED_AMOUNT','SEC_SANCTIONED_AMOUNT','PRI_ACTIVE_ACCTS', 'SEC_ACTIVE_ACCTS']
+    X_final = X_new.drop(columns = remove_cols)
+    X_final['PERFORM_CNS_SCORE_DESCRIPTION'] = regroup_cat(X_final.PERFORM_CNS_SCORE_DESCRIPTION)
+    final_data = type(data).__new__(type(data))
+    final_data.X_raw = X_final
+    final_data.y = data.y 
+    final_data._categorize_columns() 
     
-    featured_df['SALARIED_FLAG'] = data.X_raw['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
-    featured_df['PRI_SANCTION_GAP'] = data.X_raw['PRI_SANCTIONED_AMOUNT'] - data.X_raw['PRI_DISBURSED_AMOUNT']
-    featured_df['SEC_SANCTION_GAP'] = data.X_raw['SEC_SANCTIONED_AMOUNT'] - data.X_raw['SEC_DISBURSED_AMOUNT']
-    featured_df['LTA_LTV'] = (data.X_raw['DISBURSED_AMOUNT'] / data.X_raw['ASSET_COST']) / data.X_raw['LTV'] * 100
-    featured_df['PRI_EMI_DISBURSED_RATIO'] = data.X_raw['PRIMARY_INSTAL_AMT'] / (data.X_raw['PRI_DISBURSED_AMOUNT']+1.1)
-    featured_df['SEC_EMI_DISBURSED_RATIO'] = data.X_raw['SEC_INSTAL_AMT'] / (data.X_raw['SEC_DISBURSED_AMOUNT']+1.1)
-    featured_df['OUT_BALANCE_DISBURSED_RATIO'] = (data.X_raw['PRI_CURRENT_BALANCE'] + data.X_raw['SEC_CURRENT_BALANCE']) / (data.X_raw['PRI_DISBURSED_AMOUNT']+ data.X_raw['SEC_DISBURSED_AMOUNT']+1.1)
-    non_log_features = ['LTV', 'AGE_DISBURSMENT'] + data.bool_cols + data.cat_cols + data.date_cols
-    log_features = [col for col in featured_df.columns if col not in non_log_features]
-    featured_log_data = np.log(featured_df[log_features]+1.1)
-        
-    yeojohnson_cols = ['PRI_CURRENT_BALANCE', 'SEC_CURRENT_BALANCE',
-                        'PRI_SANCTION_GAP', 'SEC_SANCTION_GAP','OUT_BALANCE_DISBURSED_RATIO']
-    # Yeo-Johnson transformations
-    print("Applying Yeo-Johnson transformations...")
-    for col in yeojohnson_cols:
-        yeojohnson = PowerTransformer(method='yeo-johnson')
-        featured_log_data[col] = yeojohnson.fit_transform(featured_df[[col]])
-    cols_need_adding = [col for col in non_log_features if col not in columns_high_corr_drop]
-    final_X = pd.concat([featured_log_data, data.X_raw[cols_need_adding]], axis=1)
-    if 'PERFORM_CNS_SCORE_DESCRIPTION' not in columns_high_corr_drop:
-        category_mapping = {
+    return final_data
+
+def regroup_cat(data:pd.Series):
+    category_mapping = {
             'A-Very Low Risk': 'Low Risk',
             'B-Very Low Risk': 'Low Risk',
             'C-Very Low Risk':'Low Risk',
@@ -153,18 +140,22 @@ def feature_engineer(data:BaseData):
             'Not Scored: Only a Guarantor':'Lack Information',
             'Not Scored: Sufficient History Not Available':'Lack Information'
         }
-        final_X['PERFORM_CNS_SCORE_DESCRIPTION'] = data.X_raw.PERFORM_CNS_SCORE_DESCRIPTION.map(category_mapping)
-    final_data = type(data).__new__(type(data))
-    final_data.df = data.df  # Keep original df
-    final_data.X_raw = final_X  #
-    final_data.y = data.y 
-    final_data._categorize_columns()  # for transform function later
-    
-    return final_data
+    return data.map(category_mapping)
+
+def add_new_features(data:pd.DataFrame)-> pd.DataFrame:
+    df = data.copy()
+    df['SALARIED_FLAG'] = df['EMPLOYMENT_TYPE'].apply(lambda x: 1 if x == 'Salaried' else 0)
+    df['PRI_SANCTION_GAP'] = df['PRI_SANCTIONED_AMOUNT'] - df['PRI_DISBURSED_AMOUNT']
+    df['SEC_SANCTION_GAP'] = df['SEC_SANCTIONED_AMOUNT'] - df['SEC_DISBURSED_AMOUNT']
+    df['LTA_LTV'] = (df['DISBURSED_AMOUNT'] / df['ASSET_COST']) / df['LTV'] * 100
+    df['PRI_EMI_DISBURSED_RATIO'] = df['PRIMARY_INSTAL_AMT'] / (df['PRI_DISBURSED_AMOUNT']+1.1)
+    df['SEC_EMI_DISBURSED_RATIO'] = df['SEC_INSTAL_AMT'] / (df['SEC_DISBURSED_AMOUNT']+1.1)
+    df['OUT_BALANCE_DISBURSED_RATIO'] = (df['PRI_CURRENT_BALANCE'] + df['SEC_CURRENT_BALANCE']) / (df['PRI_DISBURSED_AMOUNT']+ df['SEC_DISBURSED_AMOUNT']+1.1)
+    return df
 
 class Transform:
     def __init__(self, data_class: BaseData, X: pd.DataFrame, scaler: Union[StandardScaler, MinMaxScaler],
-                 fitted_scaler=None, fitted_ohe=None):
+                 fitted_scaler=None, fitted_ohe=None, log_transform_cols=None, yeojohnson_cols=None):
         self.data_class = data_class
         self.df = X
         self.sample_size = len(self.df)
@@ -173,15 +164,44 @@ class Transform:
         self.bool_cols = data_class.bool_cols
         self.date_cols = data_class.date_cols
 
+        # make sure the all log cols are in num_cols
+        if log_transform_cols is None:
+            self.log_transform_cols = []
+            for col in self.num_cols:
+                if self.df[col].min() > - 0.99:
+                    self.log_transform_cols.append(col)
+        else:
+            self.log_transform_cols = [col for col in self.log_transform_cols if col in self.num_cols] # make sure the cols exist
+
+        if yeojohnson_cols is None:
+            self.yeojohnson_cols = []
+            for col in self.num_cols:
+                if self.df[col].min() <= -0.99:
+                    self.yeojohnson_cols.append(col)
+        else:
+            self.yeojohnson_cols = [col for col in self.yeojohnson_cols if col in self.num_cols]
+        
+        self.yeojohnson_transformers = {}
+
         if self.num_cols or self.date_cols:
-            self.num_df = pd.concat([self.df[self.num_cols],self.df[self.date_cols].astype('int64')], axis =1)
-            # Use pre-fitted scaler if provided, otherwise fit a new one
+            self.num_df = pd.concat([self.df[self.num_cols], self.df[self.date_cols].astype('int64')], axis=1)
+            
+            # Apply transformations
+            self.num_df_transformed = self.num_df.copy()
+            
+            for col in self.log_transform_cols:
+                self.num_df_transformed[col] = np.log1p(self.num_df[col])
+
+            for col in self.yeojohnson_cols:
+                    yeojohnson = PowerTransformer(method='yeo-johnson')
+                    self.num_df_transformed[col] = yeojohnson.fit_transform(
+                        self.num_df[[col]]
+                    ).flatten()
+                    self.yeojohnson_transformers[col] = yeojohnson
             if fitted_scaler is not None:
                 self.scaler = fitted_scaler
             else:
-                self.scaler = scaler.fit(self.num_df)
-
-        # Store pre-fitted OHE if provided
+                self.scaler = scaler.fit(self.num_df_transformed)
         self.fitted_ohe = fitted_ohe
         self.input_cols = self.get_OHEncoded_cols() + self.bool_cols + self.num_cols + self.date_cols
 
@@ -204,13 +224,29 @@ class Transform:
         return data
 
     def scale(self):
-        return self.scaler.transform(self.num_df)
+        return self.scaler.transform(self.num_df_transformed)
 
     def reverse_scaler(self, data):
-        return self.scaler.inverse_transform(data)
+        """Inverse scale (standardization), then inverse log transformations"""
+        unscaled_data = self.scaler.inverse_transform(data)
+        unscaled_df = pd.DataFrame(unscaled_data, columns=self.num_cols + self.date_cols)
+        
+        # Inverse log1p transformation
+        for col in self.log_transform_cols:
+            unscaled_df[col] = np.expm1(unscaled_df[col])
+            unscaled_df[col] = np.maximum(unscaled_df[col], 0) #replace negative with 0 
+        
+        # Inverse Yeo-Johnson transformation
+        for col in self.yeojohnson_cols:
+            if col in self.yeojohnson_transformers:
+                col_values = unscaled_df[[col]].values
+                unscaled_df[col] = self.yeojohnson_transformers[col].inverse_transform(
+                    col_values
+                ).flatten()
+        
+        return unscaled_df.values
     
     def fit_OHE(self):
-        # Use pre-fitted OHE if provided, otherwise fit a new one
         if self.fitted_ohe is not None:
             return self.fitted_ohe
         ohe = OneHotEncoder()
@@ -314,6 +350,9 @@ class Transform:
         reversed_OHE[self.date_cols] = reversed_OHE[self.date_cols].apply(pd.to_datetime, unit= 'ns')
         for col in self.date_cols:
             reversed_OHE[col] = pd.to_datetime(reversed_OHE[col], unit='ns').dt.strftime('%Y-%m-%d')
+        # Make sure the types stay the same
+        for col in reversed_OHE.columns:
+            reversed_OHE[col] = reversed_OHE[col].astype(self.df[col].dtype)
         return reversed_OHE
 
     def get_metadata(self):
