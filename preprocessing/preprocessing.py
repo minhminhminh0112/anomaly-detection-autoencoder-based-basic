@@ -112,7 +112,7 @@ def feature_engineering(data:BaseData =None):
     X_final = X_new.drop(columns = remove_cols)
     X_final['PERFORM_CNS_SCORE_DESCRIPTION'] = regroup_cat(X_final.PERFORM_CNS_SCORE_DESCRIPTION)
     final_data = type(data).__new__(type(data))
-    final_data.X_raw = X_final
+    final_data.X_raw = X_final #(233154, 29) with 5 ohe cols and 6 bool cols and 22 num cols  
     final_data.y = data.y 
     final_data._categorize_columns() 
     
@@ -133,12 +133,13 @@ def regroup_cat(data:pd.Series):
             'K-High Risk':'High Risk',
             'L-Very High Risk':'High Risk', 
             'M-Very High Risk':'High Risk',
-            'No Bureau History Available':'No Bureau History Available',
+            'No Bureau History Available':'Insufficient / Non-standard Data',
             'Not Scored: No Activity seen on the customer (Inactive)':'Inactivity',
             'Not Scored: No Updates available in last 36 months':'Inactivity',
-            'Not Scored: Not Enough Info available on the customer':'Lack Information',
-            'Not Scored: Only a Guarantor':'Lack Information',
-            'Not Scored: Sufficient History Not Available':'Lack Information'
+            'Not Scored: Not Enough Info available on the customer':'Insufficient / Non-standard Data',
+            'Not Scored: Only a Guarantor':'Insufficient / Non-standard Data',
+            'Not Scored: Sufficient History Not Available':'Insufficient / Non-standard Data',
+            'Not Scored: More than 50 active Accounts found': 'Insufficient / Non-standard Data'
         }
     return data.map(category_mapping)
 
