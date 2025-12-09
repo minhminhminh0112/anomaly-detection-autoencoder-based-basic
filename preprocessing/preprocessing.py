@@ -17,7 +17,8 @@ class BaseData:
         self.X_raw = None
         self.y = None
         self.ordered_cols = None
-        
+        self.log_transform = None
+
     def _categorize_columns(self):
         '''Categorize columns into different types (date, boolean, numerical, categorical)'''
         if self.X_raw is None:
@@ -43,10 +44,10 @@ class BaseData:
             scaler = MinMaxScaler()
         else:
             scaler = StandardScaler()
-        return Transform(self, X=X, scaler=scaler, fitted_scaler=fitted_scaler, fitted_ohe=fitted_ohe)
+        return Transform(self, X=X, scaler=scaler, fitted_scaler=fitted_scaler, fitted_ohe=fitted_ohe, log_transform=self.log_transform)
     
     def get_X_train(self, array_format=True, scaler_type: Literal['standard', 'minmax'] = 'standard'):
-        '''Get transformed training data'''
+        '''Get transformed training data (quicker)'''
         return self.transform(X=self.X_raw, scaler_type=scaler_type).transform_input(array_format=array_format)
 
     def get_ohe_dict(self):
@@ -100,6 +101,7 @@ class SyntheticData(BaseData):
         self.df = pd.read_csv(self.path)
         self.X_raw = self.df.drop(columns='LOAN_DEFAULT')
         self.y = self.df['LOAN_DEFAULT']
+        self.log_transform = True
         self._categorize_columns()
 
 def feature_engineering(data:BaseData =None):
@@ -114,6 +116,7 @@ def feature_engineering(data:BaseData =None):
     final_data = type(data).__new__(type(data))
     final_data.X_raw = X_final #(233154, 29) with 5 ohe cols and 6 bool cols and 22 num cols  
     final_data.y = data.y 
+    final_data.log_transform = False
     final_data._categorize_columns() 
     
     return final_data
@@ -156,7 +159,7 @@ def add_new_features(data:pd.DataFrame)-> pd.DataFrame:
 
 class Transform:
     def __init__(self, data_class: BaseData, X: pd.DataFrame, scaler: Union[StandardScaler, MinMaxScaler],
-                 fitted_scaler=None, fitted_ohe=None, log_transform_cols=None, yeojohnson_cols=None):
+                 fitted_scaler=None, fitted_ohe=None,log_transform = False, log_transform_cols=None, yeojohnson_cols=None):
         self.data_class = data_class
         self.df = X
         self.sample_size = len(self.df)
@@ -164,47 +167,42 @@ class Transform:
         self.num_cols = data_class.num_cols
         self.bool_cols = data_class.bool_cols
         self.date_cols = data_class.date_cols
+        self.log_transform = log_transform
+        self.fitted_ohe = fitted_ohe
+        self.log_transform_cols = log_transform_cols
+        self.yeojohnson_cols = yeojohnson_cols
+        self.yeojohnson_transformers = {}
+        self.input_cols = self.get_OHEncoded_cols() + self.bool_cols + self.num_cols + self.date_cols
 
-        # make sure the all log cols are in num_cols
-        if log_transform_cols is None:
-            self.log_transform_cols = []
-            for col in self.num_cols:
-                if self.df[col].min() > - 0.99:
-                    self.log_transform_cols.append(col)
+        if self.log_transform:
+            self.num_df = self.log_transformation()
         else:
-            self.log_transform_cols = [col for col in self.log_transform_cols if col in self.num_cols] # make sure the cols exist
+            self.num_df =pd.concat([self.df[self.num_cols], self.df[self.date_cols].astype('int64')], axis=1)
+        self.scaler = scaler.fit(self.num_df)
 
-        if yeojohnson_cols is None:
-            self.yeojohnson_cols = []
-            for col in self.num_cols:
-                if self.df[col].min() <= -0.99:
-                    self.yeojohnson_cols.append(col)
+    def log_transformation(self):
+        if self.log_transform_cols is None:
+            self.log_transform_cols = [col for col in self.num_cols if self.df[col].min() > -0.99]
+        else:
+            self.log_transform_cols = [col for col in self.log_transform_cols if col in self.num_cols]
+
+        if self.yeojohnson_cols is None:
+            self.yeojohnson_cols = [col for col in self.num_cols if self.df[col].min() <= -0.99]
         else:
             self.yeojohnson_cols = [col for col in self.yeojohnson_cols if col in self.num_cols]
         
-        self.yeojohnson_transformers = {}
+        num_df_transformed = pd.concat([self.df[self.num_cols], self.df[self.date_cols].astype('int64')], axis=1)
+        
+        for col in self.log_transform_cols:
+            num_df_transformed[col] = np.log1p(self.num_df[col])
 
-        if self.num_cols or self.date_cols:
-            self.num_df = pd.concat([self.df[self.num_cols], self.df[self.date_cols].astype('int64')], axis=1)
-            
-            # Apply transformations
-            self.num_df_transformed = self.num_df.copy()
-            
-            for col in self.log_transform_cols:
-                self.num_df_transformed[col] = np.log1p(self.num_df[col])
-
-            for col in self.yeojohnson_cols:
-                    yeojohnson = PowerTransformer(method='yeo-johnson')
-                    self.num_df_transformed[col] = yeojohnson.fit_transform(
-                        self.num_df[[col]]
-                    ).flatten()
-                    self.yeojohnson_transformers[col] = yeojohnson
-            if fitted_scaler is not None:
-                self.scaler = fitted_scaler
-            else:
-                self.scaler = scaler.fit(self.num_df_transformed)
-        self.fitted_ohe = fitted_ohe
-        self.input_cols = self.get_OHEncoded_cols() + self.bool_cols + self.num_cols + self.date_cols
+        for col in self.yeojohnson_cols:
+            yeojohnson = PowerTransformer(method='yeo-johnson')
+            num_df_transformed[col] = yeojohnson.fit_transform(
+                self.num_df[[col]]
+            ).flatten()
+            self.yeojohnson_transformers[col] = yeojohnson
+        return num_df_transformed
 
     def list_cat_cols(self):
         cat_dict = {}
@@ -225,25 +223,25 @@ class Transform:
         return data
 
     def scale(self):
-        return self.scaler.transform(self.num_df_transformed)
+        return self.scaler.transform(self.num_df)
 
     def reverse_scaler(self, data):
         """Inverse scale (standardization), then inverse log transformations"""
         unscaled_data = self.scaler.inverse_transform(data)
         unscaled_df = pd.DataFrame(unscaled_data, columns=self.num_cols + self.date_cols)
-        
-        # Inverse log1p transformation
-        for col in self.log_transform_cols:
-            unscaled_df[col] = np.expm1(unscaled_df[col])
-            unscaled_df[col] = np.maximum(unscaled_df[col], 0) #replace negative with 0 
-        
-        # Inverse Yeo-Johnson transformation
-        for col in self.yeojohnson_cols:
-            if col in self.yeojohnson_transformers:
-                col_values = unscaled_df[[col]].values
-                unscaled_df[col] = self.yeojohnson_transformers[col].inverse_transform(
-                    col_values
-                ).flatten()
+        if self.log_transform:
+            # Inverse log1p transformation
+            for col in self.log_transform_cols:
+                unscaled_df[col] = np.expm1(unscaled_df[col])
+                unscaled_df[col] = np.maximum(unscaled_df[col], 0) #replace negative with 0 
+            
+            # Inverse Yeo-Johnson transformation
+            for col in self.yeojohnson_cols:
+                if col in self.yeojohnson_transformers:
+                    col_values = unscaled_df[[col]].values
+                    unscaled_df[col] = self.yeojohnson_transformers[col].inverse_transform(
+                        col_values
+                    ).flatten()
         
         return unscaled_df.values
     
@@ -295,6 +293,49 @@ class Transform:
             bool_df = self.df[self.bool_cols].reset_index(drop=True)
             num_df = pd.DataFrame(self.scale(), columns=self.num_cols + self.date_cols).reset_index(drop=True)
             input_df = pd.concat([cat_df, bool_df, num_df], axis=1)
+            return input_df
+        
+    def transform_input_X(self, X=None, array_format=True):
+        data = X if X is not None else self.df
+        ohe = self.fit_OHE()
+        cat_encoded = ohe.transform(data[self.cat_cols]).toarray()
+        bool_data = data[self.bool_cols].values
+        
+        if self.log_transform:
+            num_data = data[self.num_cols].copy()
+            date_data = data[self.date_cols].astype('int64')
+            num_df_transformed = pd.concat([num_data, date_data], axis=1)
+            
+            for col in self.log_transform_cols:
+                if col in num_df_transformed.columns:
+                    num_df_transformed[col] = np.log1p(num_df_transformed[col])
+            
+            for col in self.yeojohnson_cols:
+                if col in self.yeojohnson_transformers and col in num_df_transformed.columns:
+                    num_df_transformed[col] = self.yeojohnson_transformers[col].transform(
+                        num_df_transformed[[col]]
+                    ).flatten()
+
+            num_scaled = self.scaler.transform(num_df_transformed)
+        else:
+            num_df = pd.concat([data[self.num_cols], data[self.date_cols].astype('int64')], axis=1)
+            num_scaled = self.scaler.transform(num_df)
+        
+        if array_format:
+            input_arr = np.concatenate([cat_encoded, bool_data, num_scaled], axis=1)
+            return input_arr.astype('float32')
+        else:
+            # Create DataFrames for each type
+            cat_df = pd.DataFrame(cat_encoded, columns=ohe.get_feature_names_out())
+            cat_df.columns = [str(col) for col in cat_df.columns]
+            bool_df = pd.DataFrame(bool_data, columns=self.bool_cols)
+            num_df = pd.DataFrame(num_scaled, columns=self.num_cols + self.date_cols)
+            input_df = pd.concat([
+                cat_df.reset_index(drop=True),
+                bool_df.reset_index(drop=True),
+                num_df.reset_index(drop=True)
+            ], axis=1)
+            
             return input_df
             
     def get_OHEncoded_cols(self):
