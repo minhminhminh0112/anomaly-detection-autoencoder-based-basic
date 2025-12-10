@@ -89,3 +89,104 @@ def compare_distribution_plot(col_names:dict, X, pred_df: pd.DataFrame, title:st
         plt.savefig(save_path + 'distributions.png')
     fig.tight_layout() #rect=[0, 0, 1, 0.99]
     fig.show()
+
+def recon_error_scatter(recon_errors, y, threshold_value):
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    normal_mask = y == 0
+    anomaly_mask = y == 1
+    ax.scatter(recon_errors.index[normal_mask], 
+            recon_errors[normal_mask],
+            alpha=0.5,
+            s=50,
+            zorder = 2,
+            label=f'Normal ({normal_mask.sum()})')
+
+    ax.scatter(recon_errors.index[anomaly_mask], 
+            recon_errors[anomaly_mask],
+            alpha=0.7,
+            s=70,
+            zorder = 1,
+            label=f'Anomaly ({anomaly_mask.sum()})')
+    ax.axhline(y=threshold_value, color='orange', linestyle='--', 
+           linewidth=2.5, label='Threshold at top true n', alpha=0.9, zorder=5)
+    ax.set_xlabel('Sample Index', fontsize=13)
+    ax.set_ylabel('Reconstruction Error', fontsize=13)
+    ax.set_title('Reconstruction Error from Autoencoder: Normal vs Anomaly', 
+                fontsize=15, pad=20)
+    ax.set_facecolor('#f7f7f7')
+    ax.legend(loc='upper left', fontsize=11, framealpha=0.95)
+    plt.tight_layout()
+    plt.show()
+
+def recon_error_hist(recon_errors, y):
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    normal_mask = y == 0
+    anomaly_mask = y == 1
+    ax.hist( 
+        recon_errors[normal_mask],
+        alpha=0.9,
+        zorder = 1,
+        bins=30,
+        label=f'Normal ({normal_mask.sum()})')
+
+    ax.hist(
+        recon_errors[anomaly_mask],
+        alpha=0.9,
+        zorder = 2,
+        bins=30,
+        label=f'Anomaly ({anomaly_mask.sum()})')
+
+    ax.set_xlabel('Reconstruction Error', fontsize=13)
+    ax.set_ylabel('Count', fontsize=13)
+    ax.set_title('Reconstruction Error from Autoencoder: Normal vs Anomaly', 
+            fontsize=15, pad=20)
+    ax.set_facecolor('#f7f7f7')
+    ax.legend(loc='upper left', fontsize=11, framealpha=0.95)
+    plt.tight_layout()
+    plt.show()
+
+def evaluation_metrics_over_percentile_thresholds(recon_errors, y):
+    from sklearn.metrics import f1_score, precision_score, recall_score
+
+    percentiles = np.arange(0, 100, 1)
+
+    f1_scores = []
+    precision_scores = []
+    recall_scores = []
+    thresholds = []
+
+    for p in percentiles:
+        threshold = np.percentile(recon_errors, p)
+        thresholds.append(threshold)
+        
+        y_pred = (recon_errors > threshold).astype(int)
+        
+        f1_scores.append(f1_score(y, y_pred))
+        precision_scores.append(precision_score(y, y_pred, zero_division=0))
+        recall_scores.append(recall_score(y, y_pred, zero_division=0))
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    ax.plot(percentiles, f1_scores, color='blue', 
+            linewidth=2.5, label='F1-Score', alpha=0.8)
+    ax.plot(percentiles, precision_scores,color='green', 
+            linewidth=2,  label='Precision', alpha=0.7)
+    ax.plot(percentiles, recall_scores, color='orange', 
+            linewidth=2, label='Recall', alpha=0.7)
+
+
+    ax.set_xlabel('Percentile Threshold', fontsize=13)
+    ax.set_ylabel('Score', fontsize=13)
+    ax.set_title('Classification Metrics vs Percentile Threshold', 
+                fontsize=15, pad=20)
+
+    # ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    ax.set_facecolor('#f7f7f7')
+    ax.legend(loc='best', fontsize=11, framealpha=0.95)
+    ax.set_xlim(percentiles.min() - 2, percentiles.max() + 2)
+    ax.set_ylim(-0.05, 1.05)
+
+    plt.tight_layout()
+    plt.show()
