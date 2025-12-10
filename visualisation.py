@@ -190,3 +190,79 @@ def evaluation_metrics_over_percentile_thresholds(recon_errors, y):
 
     plt.tight_layout()
     plt.show()
+
+def feature_importance_plot(feature_importance_sorted:pd.Series):
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    bars = ax.barh(feature_importance_sorted.index, 
+                feature_importance_sorted.values,
+                alpha=0.8,
+                linewidth=0.5)
+
+    ax.set_xlabel('Importance Score')
+    ax.set_ylabel('Features')
+    ax.set_title('Feature Importance Ranking', pad=20)
+
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='x')
+    ax.set_facecolor('#f7f7f7')
+
+    plt.tight_layout()
+    plt.show()
+
+def feature_importance_groups_plot(x1:pd.Series, x2:pd.Series, x3:pd.Series):
+    sorted_index = x1.sort_values().index
+    n = len(sorted_index)
+    x = np.arange(n)
+
+    n_bars = 3
+    total_height = 0.8               
+    bar_height = total_height / n_bars
+
+    offsets = np.linspace(-total_height/2 + bar_height/2,
+                        total_height/2 - bar_height/2,
+                        n_bars)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    ys1 = x + offsets[0]
+    ys2 = x + offsets[1]
+    ys3 = x + offsets[2]
+
+    bars1 = ax.barh(ys1,
+                    x1[sorted_index].values,
+                    height=bar_height, label='All Importance',
+                    color='blue', alpha=0.8, linewidth=0.5)
+
+    bars2 = ax.barh(ys2,
+                    x2[sorted_index].values,
+                    height=bar_height, label='Normal Loan Importance',
+                    color='green', alpha=0.8, linewidth=0.5)
+
+    bars3 = ax.barh(ys3,
+                    x3[sorted_index].values,
+                    height=bar_height, label='Default Loan Importance',
+                    color='orange', alpha=0.8, linewidth=0.5)
+
+    ax.set_xlabel('Importance Score')
+    ax.set_ylabel('Features')
+    ax.set_title('Feature Importance Ranking', pad=12)
+
+    ax.set_yticks(x)
+    ax.set_yticklabels(sorted_index)
+
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='x')
+    ax.set_facecolor('#f7f7f7')
+    ax.legend(loc='lower right')
+
+    plt.tight_layout()
+    plt.show()
+
+def reconstruction_error_one_sample(error:pd.Series):
+    fig, ax = plt.subplots(figsize=(10,5))
+    ax.bar(error.index, error.values, alpha=0.8)
+    ax.set_ylabel("Reconstruction Error")
+    ax.set_xlabel("Features")
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='y')
+    ax.set_xticklabels(error.index, rotation=45, ha='right')
+    plt.tight_layout()
+    plt.show()
