@@ -12,7 +12,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pickle
-from train_helper import EarlyStoppingNew 
+from train_helper import EarlyStopping, EarlyStoppingPercentage
 from eval.evaluate_recon import evaluate_metrics, confusion_matrix_metrics
 from preprocessing.preprocessing import * 
 from sklearn.model_selection import train_test_split
@@ -38,7 +38,7 @@ def get_random_corruption_mask(X):
         mask[row_idx, cols_to_mask] = 1
     return torch.from_numpy(mask)
 
-def corrupt_data( X: Tensor, mask: Tensor, n_binary_cols: int, noise_std: Tensor) -> Tensor:
+def corrupt_data( X: Tensor, mask: Tensor, n_binary_cols: int) -> Tensor:
     """
     Corrupt data for denoising autoencoder.
     
@@ -61,13 +61,14 @@ def corrupt_data( X: Tensor, mask: Tensor, n_binary_cols: int, noise_std: Tensor
     # For numerical attributes, add Gaussian noise
     if n_binary_cols < X.shape[1]:
         num_mask = mask[:, n_binary_cols:].bool()
-        noise = torch.randn_like(X[:, n_binary_cols:]) * noise_std
+        noise = torch.randn_like(X[:, n_binary_cols:]) 
         X_corrupted[:, n_binary_cols:][num_mask] += noise[num_mask]
     
     return X_corrupted
 
 def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
-                            hidden_dim_1=256, hidden_dim_2=64, latent_dim=32, patience = 2):
+                            hidden_dim_1=256, hidden_dim_2=64, latent_dim=32, patience = 2, 
+                            min_delta = 0.005, min_delta_type = 'absolute'):
     """
     Train a basic autoencoder on transformed VehicleData using MSELoss.
 
@@ -78,25 +79,20 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         hidden_dim: Hidden layer dimension
         latent_dim: Latent space dimension
     """
-    # data = np.load('data_removed_iso_outliers.npz')
-    # X_transformed = data['X_transformed']
-    path = 'synthetic_data/synthetic_data.csv'
-    synth = SyntheticData(path)
-    final_data = feature_engineer(synth)
-    X_transformed = final_data.get_X_train(array_format = True)
-    y = final_data.y
+    with open('synthetic_data/data/train_test_data.pkl', 'rb') as f:
+        loaded_data = pickle.load(f)
+    with open('synthetic_data/data/transformer.pkl', 'rb') as f:
+        transformer = pickle.load(f)
 
-    transformer = final_data.transform(final_data.X_raw)
-    print(final_data.X_raw.shape)
-    print(transformer.get_metadata())
+    y_train = np.array(loaded_data['y_train'])
+    y_test = np.array(loaded_data['y_test'])
+    X_train = transformer.transform_input()
+    X_test = transformer.transform_input_X(loaded_data['X_test'])
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_transformed, y, test_size=0.2, random_state=42
-    )
-    y_train = np.array(y_train)
     input_dim = X_train.shape[1]
     top_n = y_train.sum()
-
+    
+    print(transformer.get_metadata())
 
     train_dataset = TensorDataset(torch.FloatTensor(X_train))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -107,7 +103,6 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     bool_criterion = nn.BCELoss(reduction='none')
     bool_weight = 1 #n_binary_cols / input_dim
     num_weight = 8
-    noise_std = torch.from_numpy(np.std(X_transformed[:,n_binary_cols:], axis = 0)).float()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     print(f"\nModel architecture:")
@@ -118,7 +113,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     # epoch_pred_labels = {}
     # epoch_pred_labels['real_labels'] = y_train
     # epoch_pred_labels['epochs'] = {}
-    early_stopping_error = EarlyStoppingNew(patience=patience)
+    early_stopping = EarlyStoppingPercentage(patience = patience, min_delta=min_delta, min_delta_type = 'absolute') #increase threshold should be larger than 4
 
     best_fraud_rate = 0.0
     best_epoch = 0 
@@ -143,7 +138,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         for batch in train_loader:
             x = batch[0]
             mask = get_random_corruption_mask(x)
-            x_noisy = corrupt_data(x, mask, n_binary_cols,noise_std)
+            x_noisy = corrupt_data(x, mask, n_binary_cols)
             alpha = torch.distributions.Beta(0.5, 0.5).sample()
             num_loss, binary_loss, per_sample_loss = compute_denoising_per_sample_loss(model,x_noisy,n_binary_cols,num_weight,bool_weight, 
                                                                                                          alpha, mask, num_criterion, bool_criterion, training = True)
@@ -158,8 +153,10 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
 
         model.eval()
         with torch.no_grad():
-            pred_labels_error_train, pred_labels_error_test = get_error_score_prediction_train_test(X_train, X_test, top_n, model, 
-                                                                                 n_binary_cols)
+            pred_labels_error_train, pred_labels_error_test = get_error_score_new_prediction_train_test(X_train, X_test, top_n, model, 
+                                                            attributes_info=transformer.get_metadata(), cat_cols = transformer.cat_cols, bool_cols=transformer.bool_cols)
+            normal_loan_losses = compute_per_sample_loss(model,X_train[y_train==0], n_binary_cols, num_weight, bool_weight, num_criterion, bool_criterion, training = False)
+            normal_loan_losses = torch.mean(normal_loan_losses)
 
             normal_train_error = get_error_score(model,X_train[y_train==0],n_binary_cols).mean()
             train_error = get_error_score(model,X_train,n_binary_cols).mean()
@@ -183,7 +180,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         f1_scores_test.append(f1_error_test)
         print('ERROR train normal: ',normal_train_error)
         print('ERROR train all: ', train_error)
-        print('ERROR test: ',normal_test_error)
+        print('ERROR test normal: ',normal_test_error)
         
         if detected_fraud_rate_error > best_error_score_fraud_rate:
             best_error_score_fraud_rate = detected_fraud_rate_error
@@ -195,11 +192,12 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
             best_epoch = epoch
         print(f'best precision based on error at epoch {best_epoch +1} TEST: {best_fraud_rate:.2%}')
 
-        if early_stopping_error(normal_train_error, train_error, model):
+        if early_stopping(normal_loan_losses, model):
             print(f"\nTraining stopped at epoch {epoch}")
-            print(f"Loading best model with loss: {early_stopping_error.best_train_loss:.6f}")
-            best_model_state = early_stopping_error.best_model_state
+            print(f"Loading best model with loss: {early_stopping.best_val_loss:.6f}")
+            best_model_state = early_stopping.best_model_state
             break
+
     save_epoch_losses = {'train_loss': save_train_loss,
                 'num loss': save_num_losses,
                 'bool loss': save_binary_losses,
@@ -210,30 +208,48 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
                 'f1 test': f1_scores_test,
                 'epoch_early_stopping_loss':early_stopping_epoch_losses,
                 'epoch_early_stopping_error':early_stopping_epoch_error,}
-    return best_model_state, transformer, y, save_epoch_losses
+    return model, best_model_state, transformer, save_epoch_losses
 
 
 if __name__ == "__main__":
-    # Train the model
-    best_model_state, transformer, y, save_epoch_losses = train_denoising_autoencoder(
+    hidden_dim_1 = 128
+    hidden_dim_2 = 64
+    latent_dim = 16
+    learning_rate = 1e-5
+    patience = 4
+    min_delta = 0.005
+    min_delta_type = 'absolute'
+
+    model, best_model_state, transformer, save_epoch_losses = train_denoising_autoencoder(
         epochs=600,
         batch_size=128,
-        learning_rate=1e-5,
-        hidden_dim_1=128,
-        hidden_dim_2=32,
-        latent_dim=16, 
-        patience=3
+        learning_rate=learning_rate,
+        hidden_dim_1=hidden_dim_1,
+        hidden_dim_2=hidden_dim_2, #64
+        latent_dim=latent_dim, #32
+        patience=patience,
+        min_delta = min_delta,
+        min_delta_type= min_delta_type
     )
-    experiment_name = 'denoising_patience_3_earlystopping_all_train_decreases'
+    experiment_name = 'denoising_regroup_cat_patience_4'
     path = os.path.join("C:/Users/midon/Documents/anomaly-detection-autoencoder-based-basic/saved_models", experiment_name)
     if not os.path.exists(path):
         os.makedirs(path)
+
+    torch.save(model, path+ '/full_model.pth')
     # torch.save(model.state_dict(), path + "/weights.pth")
     torch.save(best_model_state, path + "/weights.pth")
     with open(path + '/epoch_losses.pkl', 'wb') as f:
         pickle.dump(save_epoch_losses, f)
 
-    with open(path + '/transformer.pkl', 'wb') as f:
-        pickle.dump(transformer, f)
-
-    np.save(path + "/y.npy", y)
+    hyperparams = {
+               'hidden_dim_1': hidden_dim_1,
+               'hidden_dim_2': hidden_dim_2,
+               'latent_dim': latent_dim, 
+               'learning_rate': learning_rate,
+               'patience':patience,
+               'min_delta': min_delta,
+               'min_delta_type': min_delta_type
+               }
+    with open(path + '/hyperparams.pkl', 'wb') as f:
+        pickle.dump(hyperparams, f)
