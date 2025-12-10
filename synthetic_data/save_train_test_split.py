@@ -27,11 +27,10 @@ X_train, X_test, y_train, y_test = train_test_split(
 final_data = type(synth).__new__(type(synth))
 final_data.X_raw = X_train 
 final_data.y = y_train
-final_data.log_transform = False
 final_data._categorize_columns() 
 transformer_train = final_data.transform(final_data.X_raw) 
-# SAVE
-with open(path + '/transformer.pkl', 'wb') as f:
+
+with open(path + '/transformer_log.pkl', 'wb') as f:
         pickle.dump(transformer_train, f)
 
 data_dict = {
@@ -41,5 +40,5 @@ data_dict = {
     'y_test': y_test
 }
 
-with open(path + '/train_test_data.pkl', 'wb') as f:
+with open(path + '/train_test_data_log.pkl', 'wb') as f:
     pickle.dump(data_dict, f)

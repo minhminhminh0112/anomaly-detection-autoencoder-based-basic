@@ -17,7 +17,6 @@ class BaseData:
         self.X_raw = None
         self.y = None
         self.ordered_cols = None
-        self.log_transform = None
 
     def _categorize_columns(self):
         '''Categorize columns into different types (date, boolean, numerical, categorical)'''
@@ -34,7 +33,7 @@ class BaseData:
         self.ordered_cols = self.X_raw.columns.tolist()
     
     def transform(self, X: pd.DataFrame, scaler_type: Literal['standard', 'minmax'] = 'standard',
-                  fitted_scaler=None, fitted_ohe=None):
+                  fitted_scaler=None, fitted_ohe=None, log_transform =True):
         '''Transform data using specified scaler'''
         valid_scalers = ['standard', 'minmax']
         if scaler_type.lower() not in valid_scalers:
@@ -44,7 +43,7 @@ class BaseData:
             scaler = MinMaxScaler()
         else:
             scaler = StandardScaler()
-        return Transform(self, X=X, scaler=scaler, fitted_scaler=fitted_scaler, fitted_ohe=fitted_ohe, log_transform=self.log_transform)
+        return Transform(self, X=X, scaler=scaler, fitted_scaler=fitted_scaler, fitted_ohe=fitted_ohe, log_transform=log_transform)
     
     def get_X_train(self, array_format=True, scaler_type: Literal['standard', 'minmax'] = 'standard'):
         '''Get transformed training data (quicker)'''
@@ -101,7 +100,6 @@ class SyntheticData(BaseData):
         self.df = pd.read_csv(self.path)
         self.X_raw = self.df.drop(columns='LOAN_DEFAULT')
         self.y = self.df['LOAN_DEFAULT']
-        self.log_transform = True
         self._categorize_columns()
 
 def feature_engineering(data:BaseData =None):
@@ -159,7 +157,7 @@ def add_new_features(data:pd.DataFrame)-> pd.DataFrame:
 
 class Transform:
     def __init__(self, data_class: BaseData, X: pd.DataFrame, scaler: Union[StandardScaler, MinMaxScaler],
-                 fitted_scaler=None, fitted_ohe=None,log_transform = False, log_transform_cols=None, yeojohnson_cols=None):
+                 fitted_scaler=None, fitted_ohe=None,log_transform = True, log_transform_cols=None, yeojohnson_cols=None):
         self.data_class = data_class
         self.df = X
         self.sample_size = len(self.df)
@@ -181,26 +179,25 @@ class Transform:
         self.scaler = scaler.fit(self.num_df)
 
     def log_transformation(self):
+        
         if self.log_transform_cols is None:
             self.log_transform_cols = [col for col in self.num_cols if self.df[col].min() > -0.99]
         else:
-            self.log_transform_cols = [col for col in self.log_transform_cols if col in self.num_cols]
+            self.log_transform_cols = [col for col in self.log_transform_cols if col in self.num_cols and col not in ['LTV', 'AGE_DISBURSEMENT']]
 
         if self.yeojohnson_cols is None:
             self.yeojohnson_cols = [col for col in self.num_cols if self.df[col].min() <= -0.99]
         else:
-            self.yeojohnson_cols = [col for col in self.yeojohnson_cols if col in self.num_cols]
+            self.yeojohnson_cols = [col for col in self.yeojohnson_cols if col in self.num_cols and col not in ['LTV', 'AGE_DISBURSEMENT']]
         
         num_df_transformed = pd.concat([self.df[self.num_cols], self.df[self.date_cols].astype('int64')], axis=1)
         
         for col in self.log_transform_cols:
-            num_df_transformed[col] = np.log1p(self.num_df[col])
+            num_df_transformed[col] = np.log1p(num_df_transformed[col])
 
         for col in self.yeojohnson_cols:
             yeojohnson = PowerTransformer(method='yeo-johnson')
-            num_df_transformed[col] = yeojohnson.fit_transform(
-                self.num_df[[col]]
-            ).flatten()
+            num_df_transformed[col] = yeojohnson.fit_transform(num_df_transformed[[col]]).flatten()
             self.yeojohnson_transformers[col] = yeojohnson
         return num_df_transformed
 
