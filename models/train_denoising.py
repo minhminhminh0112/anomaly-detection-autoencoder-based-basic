@@ -12,12 +12,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pickle
-from train_helper import EarlyStopping, EarlyStoppingPercentage
-from eval.evaluate_recon import evaluate_metrics, confusion_matrix_metrics
+from models.train_helper import EarlyStopping, EarlyStoppingPercentage
+from eval.evaluate_recon import evaluate_metrics
 from preprocessing.preprocessing import * 
-from sklearn.model_selection import train_test_split
 from eval.evaluate_outliers import *
-from models import BasicAutoencoder
+from models.models import BasicAutoencoder
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -164,7 +163,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         save_recall_test.append(recall_test)
         save_acc_test.append(acc_test)
 
-        if early_stopping(normal_loan_losses, model, f1_train=f1_train, f1_test=f1_test):
+        if early_stopping(normal_loan_losses, model, f1_train=f1_train, f1_test=f1_test, epoch = epoch):
             print(f"\nTraining stopped at epoch {epoch}")
             print(f"Loading best model with loss: {early_stopping.best_val_loss:.6f}")
             break
@@ -172,6 +171,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     best_model_state = early_stopping.best_model_state
     early_stopping_f1_train = early_stopping.best_f1_train
     early_stopping_f1_test = early_stopping.best_f1_test
+    early_stopping_epoch = early_stopping.best_epoch
 
     save_epoch_losses = {'train_loss': save_train_loss,
                     'num_loss': save_num_losses,
@@ -187,7 +187,7 @@ def train_denoising_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
                     'acc_test':acc_test,
                    }
     
-    return model, best_model_state, save_epoch_losses, early_stopping_f1_train, early_stopping_f1_test
+    return model, best_model_state, save_epoch_losses, early_stopping_f1_train, early_stopping_f1_test, early_stopping_epoch
 
 
 if __name__ == "__main__":
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     min_delta = 0.005
     num_weight = 12
 
-    model, best_model_state, save_epoch_losses, early_stopping_f1_train, early_stopping_f1_test = train_denoising_autoencoder(
+    model, best_model_state, save_epoch_losses, early_stopping_f1_train, early_stopping_f1_test, early_stopping_epoch = train_denoising_autoencoder(
         epochs=500,
         batch_size=128,
         learning_rate=learning_rate,
