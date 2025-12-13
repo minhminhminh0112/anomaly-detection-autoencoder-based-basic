@@ -28,12 +28,11 @@ class BasicAutoencoder(nn.Module):
             nn.Linear(hidden_dim_1, input_dim)
         )
 
-        self.sigmoid = nn.Sigmoid() # for binary cols
     def forward(self, x):
         latent = self.encoder(x)
         reconstructed = self.decoder(latent)
         if self.n_binary_cols > 0:
-            reconstructed_binary = self.sigmoid(reconstructed[:, :self.n_binary_cols])
+            reconstructed_binary = torch.sigmoid(reconstructed[:, :self.n_binary_cols])
             reconstructed_continuous = reconstructed[:, self.n_binary_cols:]
             reconstructed_concat = torch.cat([reconstructed_binary, reconstructed_continuous], dim=1)
         return reconstructed_concat
@@ -42,23 +41,36 @@ class Generator(nn.Module):
     """
     Generator network that takes Gaussian random noise and generates synthetic vehicle data.
     """
-    def __init__(self, noise_dim, output_dim, hidden_dim=128):
+    def __init__(self, n_binary_cols, noise_dim, output_dim, hidden_dim=128):
         super(Generator, self).__init__()
-
+        self.n_binary_cols = n_binary_cols
         self.network = nn.Sequential(
-            nn.Linear(noise_dim, hidden_dim),
+            nn.Linear(noise_dim, hidden_dim), #256
             nn.BatchNorm1d(hidden_dim),
+            # nn.ReLU(),
             nn.LeakyReLU(0.2),
 
-            nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.Linear(hidden_dim, hidden_dim * 2), #512
             nn.BatchNorm1d(hidden_dim * 2),
+            # nn.ReLU(),
             nn.LeakyReLU(0.2),
+            
+            # nn.Linear(hidden_dim * 2, hidden_dim * 3), #756
+            # nn.BatchNorm1d(hidden_dim * 3),
+            # # nn.ReLU(),
+            # nn.LeakyReLU(0.2),
 
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
+            nn.Linear(hidden_dim * 2, hidden_dim * 2), #512
             nn.BatchNorm1d(hidden_dim * 2),
+            # nn.ReLU(),
             nn.LeakyReLU(0.2),
 
-            nn.Linear(hidden_dim * 2, output_dim)
+            nn.Linear(hidden_dim * 2, hidden_dim),   #256
+            nn.BatchNorm1d(hidden_dim),
+            # nn.ReLU(),
+            nn.LeakyReLU(0.2),
+
+            nn.Linear(hidden_dim, output_dim)
         )
 
     def forward(self, z):
@@ -68,30 +80,35 @@ class Generator(nn.Module):
         Returns:
             Generated data of shape (batch_size, output_dim)
         """
-        return self.network(z)
+        reconstructed = self.network(z)
+        if self.n_binary_cols > 0:
+            reconstructed_binary = torch.sigmoid(reconstructed[:, :self.n_binary_cols])
+            reconstructed_continuous = reconstructed[:, self.n_binary_cols:]
+            reconstructed_concat = torch.cat([reconstructed_binary, reconstructed_continuous], dim=1)
+        return reconstructed_concat
 
 
 class Discriminator(nn.Module):
     """
     Discriminator network that distinguishes between real vehicle data and generated fake data.
     """
-    def __init__(self, input_dim, hidden_dim=128):
+    def __init__(self, input_dim, hidden_dim=128, dropout = 0.2):
         super(Discriminator, self).__init__()
 
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim * 2),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
+            nn.Dropout(dropout), #0.3
 
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
+            nn.Dropout(dropout), #0.3
 
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3),
+            nn.Dropout(dropout), #0.3
 
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Linear(hidden_dim//2, 1),
             nn.Sigmoid()  # Output probability [0, 1]
         )
 
