@@ -17,8 +17,8 @@ from eval.evaluate_recon import evaluate_metrics, confusion_matrix_metrics
 from preprocessing.preprocessing import * 
 from sklearn.model_selection import train_test_split
 from eval.evaluate_outliers import *
-from models.train_helper import EarlyStopping
-from models.models import BasicAutoencoder
+from train_helper import EarlyStopping
+from models import BasicAutoencoder
 # Set random seed for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
@@ -27,9 +27,9 @@ np.random.seed(42)
 def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
                             hidden_dim_1=256, hidden_dim_2=64, latent_dim=32, patience = 4, min_delta = 0.0, num_weight = 4):
   
-    with open('synthetic_data/data/train_test_data_log.pkl', 'rb') as f:
+    with open('synthetic_data/data/train_test_data.pkl', 'rb') as f:
         loaded_data = pickle.load(f)
-    with open('synthetic_data/data/transformer_log.pkl', 'rb') as f:
+    with open('synthetic_data/data/transformer.pkl', 'rb') as f:
         transformer = pickle.load(f)
 
     y_train = np.array(loaded_data['y_train'])
@@ -69,6 +69,7 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
     save_precision_test = []
     save_recall_test = []
     save_acc_test = []
+    save_percentiles = []
 
     for epoch in range(epochs):
         model.train()
@@ -92,8 +93,10 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
 
         model.eval()
         with torch.no_grad():
-            pred_labels_error_train, pred_labels_error_test = get_error_score_prediction_train_test(X_train, X_test, top_n, model, 
-                                                                                 n_binary_cols)
+            pred_labels_error_train, pred_labels_error_test = get_error_score_prediction_train_test(X_train, X_test, top_n, model, attributes_info=transformer.get_metadata(), cat_cols=transformer.cat_cols, bool_cols=transformer.bool_cols)
+            error_score_train = get_error_score(model= model, X=X_train, attributes_info=transformer.get_metadata(), cat_cols=transformer.cat_cols, bool_cols=transformer.bool_cols)
+            error_score_train = error_score_train.mean(axis=1)
+            percentiles = compute_percentile_ranks(error_score_train)
             normal_loan_losses = compute_per_sample_loss(model,X_train[y_train==0], n_binary_cols, num_weight, bool_weight, num_criterion, bool_criterion, training = False)
             normal_loan_losses = torch.mean(normal_loan_losses)
         
@@ -110,6 +113,7 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         save_num_losses.append(num_losses/len(train_loader))
         save_binary_losses.append(binary_losses/len(train_loader))
         save_normal_loan_losses.append(normal_loan_losses)
+        save_percentiles.append(percentiles)
         save_f1_train.append(f1_train)
         save_precision_train.append(precision_train)
         save_recall_train.append(recall_train)
@@ -119,7 +123,7 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
         save_recall_test.append(recall_test)
         save_acc_test.append(acc_test)
 
-        if early_stopping(normal_loan_losses, model, f1_train=f1_train, f1_test=f1_test):
+        if early_stopping(normal_loan_losses, model, f1_train=f1_train, f1_test=f1_test, epoch=epoch):
             print(f"\nTraining stopped at epoch {epoch}")
             print(f"Loading best model with loss: {early_stopping.best_val_loss:.6f}")
             break
@@ -131,6 +135,7 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
                     'num_loss': save_num_losses,
                     'bool_loss': save_binary_losses,
                     'normal_loan_loss' :save_normal_loan_losses,
+                    'percentile_train': save_percentiles,
                     'f1_train': f1_train,
                     'precision_train': precision_train,
                     'recall_train':recall_train,
@@ -146,13 +151,13 @@ def train_basic_autoencoder(epochs=50, batch_size=256, learning_rate=1e-3,
 
 if __name__ == "__main__":
 
-    hidden_dim_1 = 128
+    hidden_dim_1 = 64
     hidden_dim_2 = 64
     latent_dim = 16
     learning_rate = 1e-4
-    patience = 3
+    patience = 4
     min_delta = 0.0
-    num_weight = 4
+    num_weight = 12
 
     model, best_model_state, save_epoch_losses, early_stopping_f1_train, early_stopping_f1_test = train_basic_autoencoder(
         epochs=500,
@@ -165,8 +170,8 @@ if __name__ == "__main__":
         min_delta= min_delta,
         num_weight = num_weight
     )
-    experiment_name = f'{hidden_dim_1}_{hidden_dim_2}_{latent_dim}_lr{learning_rate*10000}_nw{num_weight}_p{patience}_mindelta0'
-    path = os.path.join("C:/Users/midon/Documents/anomaly-detection-autoencoder-based-basic/saved_models/hyperparams_tuning/autoencoder", experiment_name)
+    experiment_name = 'autoencoder_non_log646416'#f'{hidden_dim_1}_{hidden_dim_2}_{latent_dim}_lr{learning_rate*10000}_nw{num_weight}_p{patience}_mindelta0'
+    path = os.path.join("C:/Users/midon/Documents/anomaly-detection-autoencoder-based-basic/saved_models", experiment_name) #/hyperparams_tuning/autoencoder
     if not os.path.exists(path):
         os.makedirs(path)
     
